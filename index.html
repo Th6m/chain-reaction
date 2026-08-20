@@ -83,17 +83,6 @@
     color:var(--text-primary);
   }
   .brand-mark{ color:var(--accent-teal); font-size:1.1em; }
-  .mode-badge{
-    font-family:var(--font-mono);
-    font-size:9px;
-    font-weight:700;
-    padding:3px 8px;
-    border-radius:10px;
-    background:var(--bg-panel);
-    border:1px solid var(--grid-line);
-    color:var(--accent-teal);
-    letter-spacing:.1em;
-  }
   .topbar-right{ display:flex; align-items:center; gap:clamp(8px,2vw,14px); }
   .stats{ display:flex; gap:clamp(14px,3vw,26px); }
   .stat{ display:flex; flex-direction:column; align-items:flex-end; }
@@ -554,46 +543,6 @@
   .bomb-chip{ background:radial-gradient(circle at 34% 28%, #3b4258, var(--bomb-core) 72%); box-shadow:0 0 6px -1px var(--bomb-spark); }
   .prism-chip{ background:conic-gradient(from 0deg, var(--accent-coral), var(--accent-amber), var(--accent-lime), var(--accent-teal), var(--accent-violet), var(--accent-coral)); }
 
-  /* ---------- Mode select ---------- */
-  .mode-select{
-    display:flex;
-    gap:8px;
-  }
-  .mode-pill{
-    padding:8px 16px;
-    border-radius:20px;
-    border:1px solid var(--grid-line);
-    background:var(--bg-panel);
-    color:var(--text-secondary);
-    font-family:var(--font-display);
-    font-weight:700;
-    font-size:11px;
-    letter-spacing:.08em;
-    cursor:pointer;
-    transition:transform .12s ease, background .15s ease, color .15s ease, box-shadow .15s ease;
-  }
-  .mode-pill:hover{ transform:translateY(-1px); }
-  .mode-pill:focus-visible{ outline:2px solid var(--text-primary); outline-offset:2px; }
-  .mode-pill.active{
-    color:#0B0E16;
-    background:linear-gradient(90deg, var(--accent-teal), var(--accent-violet));
-    border-color:transparent;
-    box-shadow:0 0 18px -3px var(--accent-teal);
-  }
-  .mode-best{
-    font-family:var(--font-mono);
-    font-size:11px;
-    color:var(--text-secondary);
-    letter-spacing:.03em;
-  }
-  .mode-tag{
-    margin:-8px 0 0;
-    font-family:var(--font-display);
-    font-weight:700;
-    font-size:11px;
-    letter-spacing:.1em;
-    color:var(--accent-teal);
-  }
   .text-link{
     background:none;
     border:none;
@@ -723,7 +672,7 @@
 <div class="app">
 
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">◆</span>CHAIN REACTION<span class="mode-badge" id="modeBadge">MEDIUM</span></div>
+    <div class="brand"><span class="brand-mark">◆</span>CHAIN REACTION</div>
     <div class="topbar-right">
       <div class="stats">
         <div class="stat">
@@ -769,22 +718,16 @@
   </main>
 
   <div class="legend">
-    <span class="legend-item"><i class="chip bomb-chip"></i>Blast — <span id="bombLegendText">tap to pop it alone, drag to chain-detonate nearby</span></span>
-    <span class="legend-item"><i class="chip prism-chip"></i>Prism — <span id="prismLegendText">tap to auto-bond, drag toward a colour to choose it</span></span>
+    <span class="legend-item"><i class="chip bomb-chip"></i>Blast — tap to pop it alone, drag to chain-detonate nearby</span>
+    <span class="legend-item"><i class="chip prism-chip"></i>Prism — tap to auto-bond, drag toward a colour to choose it</span>
   </div>
 
   <div class="overlay" id="startOverlay">
     <div class="panel">
       <h1>CHAIN REACTION</h1>
       <p class="tagline">Pop the pattern. Chase the cascade.</p>
-      <div class="mode-select" id="modeSelect">
-        <button class="mode-pill" data-mode="easy">EASY</button>
-        <button class="mode-pill" data-mode="medium">MEDIUM</button>
-        <button class="mode-pill" data-mode="hard">HARD</button>
-      </div>
-      <div class="mode-best" id="modeBest">BEST 000000</div>
       <button class="orb-button" id="startBtn" aria-label="Start game"></button>
-      <p class="hint">Click groups of 2+ matching orbs to trigger a chain — longer chains score far more.<br>Chains of 5+ trigger bonus rewards: 6 gifts a free prism, 7+ gifts a free bomb.<br>In Medium and Hard, drag blast and prism orbs to aim them.<br>The dashed line marks the danger zone — it's only over when a column overflows above it. Tap ⚡ to skip the wait for the next surge.</p>
+      <p class="hint">Click groups of 2+ matching orbs to trigger a chain — longer chains score far more.<br>Chains of 5+ trigger bonus rewards: 6 gifts a free prism, 7+ gifts a free bomb.<br>Drag blast and prism orbs to aim them.<br>The dashed line marks the danger zone — it's only over when a column overflows above it. Tap ⚡ to skip the wait for the next surge.</p>
     </div>
   </div>
 
@@ -793,21 +736,19 @@
       <h2 style="color:var(--accent-teal)">PAUSED</h2>
       <button class="orb-button" id="resumeBtn" aria-label="Resume game"></button>
       <p class="hint">RESUME</p>
-      <button class="text-link" id="mainMenuBtn">Main menu / change mode</button>
+      <button class="text-link" id="mainMenuBtn">Main menu</button>
     </div>
   </div>
 
   <div class="overlay hidden" id="overOverlay">
     <div class="panel">
       <h2>REACTION CONTAINED</h2>
-      <p class="mode-tag" id="overModeTag">MEDIUM MODE</p>
       <div class="final-scores">
         <div><span class="stat-label">FINAL SCORE</span><span class="final-val" id="finalScore">0</span></div>
         <div><span class="stat-label">BEST</span><span class="final-val" id="finalBest">0</span></div>
       </div>
       <button class="orb-button" id="retryBtn" aria-label="Play again"></button>
       <p class="hint">REACT AGAIN</p>
-      <button class="text-link" id="changeModeBtn">Change mode</button>
     </div>
   </div>
 
@@ -829,23 +770,9 @@
   const TIER_BURST={prism:10, bomb:16, bigbomb:20, megabomb:26};
   const TIER_RADIUS={bomb:1, bigbomb:2, megabomb:3};
 
-  const MODES={
-    easy:{
-      comboDynamic:false, comboFlat:2200,
-      bombAdvanced:false, prismAdvanced:false,
-      bombChanceRange:[0.06,0.06], prismChanceRange:[0.08,0.08]
-    },
-    medium:{
-      comboDynamic:true, comboBase:2800, comboSlope:160, comboFloor:1400,
-      bombAdvanced:true, prismAdvanced:true,
-      bombChanceRange:[0.025,0.055], prismChanceRange:[0.035,0.075]
-    },
-    hard:{
-      comboDynamic:true, comboBase:3400, comboSlope:230, comboFloor:800,
-      bombAdvanced:true, prismAdvanced:true,
-      bombChanceRange:[0.03,0.07], prismChanceRange:[0.04,0.10]
-    }
-  };
+  // Difficulty constants (formerly the "Hard" mode — the only one left).
+  const COMBO_BASE=3400, COMBO_SLOPE=230, COMBO_FLOOR=800;
+  const BOMB_CHANCE_RANGE=[0.03,0.07], PRISM_CHANCE_RANGE=[0.04,0.10];
 
   const gridEl=document.getElementById('grid');
   const gridWrap=document.getElementById('gridWrap');
@@ -871,21 +798,13 @@
   const resumeBtn=document.getElementById('resumeBtn');
   const pauseBtn=document.getElementById('pauseBtn');
   const mainMenuBtn=document.getElementById('mainMenuBtn');
-  const changeModeBtn=document.getElementById('changeModeBtn');
   const muteBtn=document.getElementById('muteBtn');
   const finalScoreEl=document.getElementById('finalScore');
   const finalBestEl=document.getElementById('finalBest');
-  const overModeTag=document.getElementById('overModeTag');
-  const modeBadge=document.getElementById('modeBadge');
-  const modeBestEl=document.getElementById('modeBest');
-  const modePills=document.querySelectorAll('.mode-pill');
-  const bombLegendText=document.getElementById('bombLegendText');
-  const prismLegendText=document.getElementById('prismLegendText');
   const stage=document.getElementById('stage');
 
   let grid, score=0, combo=0, lastPopTime=0, stageIndex=0;
-  let bestScores={easy:0, medium:0, hard:0};
-  let currentMode='medium';
+  let bestScore=0;
   let currentComboWindow=3400;
   let isResolving=false, gameActive=false, paused=false, pauseStartTime=0;
   let startTime=0, spawnAt=0, spawnInterval=3000;
@@ -1025,26 +944,11 @@
 
   /* ================= Combo pacing ================= */
   function comboWindowFor(level){
-    const m=MODES[currentMode];
-    if(!m.comboDynamic) return m.comboFlat;
-    return Math.max(m.comboFloor, m.comboBase-(level-1)*m.comboSlope);
+    return Math.max(COMBO_FLOOR, COMBO_BASE-(level-1)*COMBO_SLOPE);
   }
 
-  /* ================= Mode management ================= */
-  function setMode(mode){
-    if(!MODES[mode]) mode='medium';
-    currentMode=mode;
-    modePills.forEach(p=>p.classList.toggle('active', p.dataset.mode===mode));
-    modeBestEl.textContent='BEST '+String(bestScores[mode]).padStart(6,'0');
-    bestVal.textContent=String(bestScores[mode]).padStart(6,'0');
-    modeBadge.textContent=mode.toUpperCase();
-    const m=MODES[mode];
-    bombLegendText.textContent = m.bombAdvanced
-      ? 'tap to pop it alone, drag to chain-detonate nearby'
-      : 'pops a 3×3 area around it, however you touch it';
-    prismLegendText.textContent = m.prismAdvanced
-      ? 'tap to auto-bond, drag toward a colour to choose it'
-      : 'auto-bonds with its most common neighbour colour';
+  function refreshBestDisplay(){
+    bestVal.textContent=String(bestScore).padStart(6,'0');
   }
 
   /* ================= Grid state =================
@@ -1264,18 +1168,6 @@
     return {group,edges,depths,centers,triggeredChains};
   }
 
-  function simpleBlastArea(r,c,radius){
-    const rad=radius||1;
-    const group=[];
-    for(let dr=-rad;dr<=rad;dr++){
-      for(let dc=-rad;dc<=rad;dc++){
-        const nr=r+dr, nc=c+dc;
-        if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS&&grid[nr][nc]) group.push([nr,nc]);
-      }
-    }
-    return group;
-  }
-
   /* Finds the best chain a prism (or a connected cluster of prisms) can
      trigger: every colour touching the cluster is tried as a candidate,
      the longest resulting chain wins. Ties go to the colour with more
@@ -1352,7 +1244,7 @@
     return best;
   }
 
-  function spawnBonusOrb(type,radius){
+  function spawnBonusOrb(type,radius,particleCount){
     const candidates=[];
     for(let c=0;c<COLS;c++){ if(landingRow(c)>=0) candidates.push(c); }
     if(!candidates.length) return;
@@ -1364,7 +1256,8 @@
     const {cw,ch}=cellMetrics();
     let particleColor='var(--accent-violet)';
     if(type==='bomb') particleColor = rad>=3?'var(--accent-lime)':rad>=2?'var(--accent-coral)':'var(--bomb-spark)';
-    spawnParticles(c*cw+cw/2, r*ch+ch/2, particleColor, 8, 0);
+    const count=particleCount===undefined?8:particleCount;
+    if(count>0) spawnParticles(c*cw+cw/2, r*ch+ch/2, particleColor, count, 0);
   }
 
   /* ================= Input: tap vs drag ================= */
@@ -1383,8 +1276,7 @@
   function handleTap(r,c){
     const cell=grid[r] && grid[r][c];
     if(!cell) return;
-    const m=MODES[currentMode];
-    if(cell.type==='bomb'){ (m.bombAdvanced?resolveBombTap:resolveBombSimple)(r,c); return; }
+    if(cell.type==='bomb'){ resolveBombTap(r,c); return; }
     if(cell.type==='prism'){ resolvePrismTap(r,c); return; }
     const {group,edges,depths}=floodFill(r,c,cell.color);
     if(group.length<2) shakeCell(r,c);
@@ -1394,13 +1286,8 @@
   function handleDrag(r,c,dx,dy){
     const cell=grid[r] && grid[r][c];
     if(!cell) return;
-    const m=MODES[currentMode];
-    if(cell.type==='bomb'){ (m.bombAdvanced?resolveBombDrag:resolveBombSimple)(r,c); return; }
-    if(cell.type==='prism'){
-      if(m.prismAdvanced) resolvePrismDrag(r,c, primaryDirection(dx,dy));
-      else resolvePrismTap(r,c);
-      return;
-    }
+    if(cell.type==='bomb'){ resolveBombDrag(r,c); return; }
+    if(cell.type==='prism'){ resolvePrismDrag(r,c, primaryDirection(dx,dy)); return; }
     const {group,edges,depths}=floodFill(r,c,cell.color);
     if(group.length<2) shakeCell(r,c);
     else resolveGroup(group,edges,depths,'chain',r,c);
@@ -1438,24 +1325,19 @@
     const cellVal=grid[r] && grid[r][c];
     if(!cellVal){ clearPreviewGroup(); return; }
     const dist=Math.hypot(dx,dy);
-    const m=MODES[currentMode];
 
     if(cellVal.type==='bomb'){
-      if(m.bombAdvanced){
-        if(dist>=DRAG_THRESHOLD){
-          const {group}=computeBombChain(r,c);
-          setPreviewGroup(group,'preview-blast');
-        } else {
-          setPreviewGroup([[r,c]],'preview-blast');
-        }
+      if(dist>=DRAG_THRESHOLD){
+        const {group}=computeBombChain(r,c);
+        setPreviewGroup(group,'preview-blast');
       } else {
-        setPreviewGroup(simpleBlastArea(r,c,cellVal.radius||1),'preview-blast');
+        setPreviewGroup([[r,c]],'preview-blast');
       }
       return;
     }
 
     if(cellVal.type==='prism'){
-      if(m.prismAdvanced && dist>=DRAG_SHOW_THRESHOLD){
+      if(dist>=DRAG_SHOW_THRESHOLD){
         const dir=primaryDirection(dx,dy);
         const nr=r+dir.dr, nc=c+dir.dc;
         let targetColor=null;
@@ -1509,7 +1391,6 @@
     const originX=c*cw+cw/2, originY=r*ch+ch/2;
     const dist=Math.hypot(dx,dy);
     const maxReach=Math.min(cw,ch)*1.25;
-    const m=MODES[currentMode];
     let endX,endY,strokeColor;
     const freeFollow=()=>{
       const angle=Math.atan2(dy,dx);
@@ -1520,27 +1401,20 @@
     if(cellVal.type==='bomb'){
       strokeColor='var(--bomb-spark)';
       const p=freeFollow(); endX=p.x; endY=p.y;
-      if(m.bombAdvanced) setBombArmed(r,c, dist>=DRAG_THRESHOLD);
-      else clearBombArmed();
+      setBombArmed(r,c, dist>=DRAG_THRESHOLD);
     } else if(cellVal.type==='prism'){
-      if(m.prismAdvanced){
-        const dir=primaryDirection(dx,dy);
-        const nr=r+dir.dr, nc=c+dir.dc;
-        let targetColor=null;
-        if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS){
-          const nb=grid[nr][nc];
-          if(nb && nb.type==='normal') targetColor=`var(--accent-${nb.color})`;
-        }
-        strokeColor=targetColor||'rgba(237,239,245,.5)';
-        if(dist>=DRAG_THRESHOLD){
-          endX=originX+dir.dc*cw*0.95;
-          endY=originY+dir.dr*ch*0.95;
-        } else {
-          const p=freeFollow(); endX=p.x; endY=p.y;
-        }
+      const dir=primaryDirection(dx,dy);
+      const nr=r+dir.dr, nc=c+dir.dc;
+      let targetColor=null;
+      if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS){
+        const nb=grid[nr][nc];
+        if(nb && nb.type==='normal') targetColor=`var(--accent-${nb.color})`;
+      }
+      strokeColor=targetColor||'rgba(237,239,245,.5)';
+      if(dist>=DRAG_THRESHOLD){
+        endX=originX+dir.dc*cw*0.95;
+        endY=originY+dir.dr*ch*0.95;
       } else {
-        const best=bestPrismChain(r,c);
-        strokeColor=best?`var(--accent-${best.color})`:'rgba(237,239,245,.5)';
         const p=freeFollow(); endX=p.x; endY=p.y;
       }
     } else {
@@ -1659,18 +1533,6 @@
     resolveGroup(group,edges,depths,'bomb',r,c,{fizzle:false, centers, radius:originRadius, triggeredChains});
   }
 
-  function resolveBombSimple(r,c){
-    const rad=(grid[r][c] && grid[r][c].radius) || 1;
-    const group=simpleBlastArea(r,c,rad);
-    const edges=[]; const depths={};
-    group.forEach(([gr,gc])=>{
-      const isCenter=(gr===r&&gc===c);
-      depths[gr+'_'+gc]=isCenter?0:1;
-      if(!isCenter) edges.push({from:[r,c], to:[gr,gc], depth:0});
-    });
-    resolveGroup(group,edges,depths,'bomb',r,c,{fizzle:false, centers:[0], radius:rad});
-  }
-
   /* ================= Resolution ================= */
   function resolveGroup(group,edges,depths,kind,clickR,clickC,extra){
     isResolving=true;
@@ -1761,8 +1623,13 @@
     });
 
     const particleBudget = group.length>18?2:group.length>10?3:5;
-    const MAX_PARTICLES=48;
+    const MAX_PARTICLES=56;
     let particlesSpawned=0;
+    const spendParticles=(x,y,color,want,delay)=>{
+      const budget=Math.min(want, Math.max(0,MAX_PARTICLES-particlesSpawned));
+      if(budget>0){ spawnParticles(x,y,color,budget,delay); particlesSpawned+=budget; }
+      return budget;
+    };
 
     if(kind==='bomb'){
       if(extra && extra.fizzle) playBombFizzle();
@@ -1779,26 +1646,26 @@
       const btn=cellButtons[r][c];
       btn.style.setProperty('--pop-delay',(d*STEP_MS)+'ms');
       btn.classList.add('popping');
-      const budget=Math.min(particleBudget, MAX_PARTICLES-particlesSpawned);
-      if(budget>0){
-        spawnParticles(c*cw+cw/2, r*ch+ch/2, colorFor(r,c), budget, d*STEP_MS);
-        particlesSpawned+=budget;
-      }
+      spendParticles(c*cw+cw/2, r*ch+ch/2, colorFor(r,c), particleBudget, d*STEP_MS);
       if(kind!=='bomb') playPopTone(d);
     });
 
     let mainTierColor=null, mainTierLabel=null;
+    const MAX_TIER_FLOATERS=6;
+    let tierFloatersShown=0;
     tierEvents.forEach(ev=>{
       const tColor=tierColors[ev.tier];
       const tLabel=TIER_LABEL[ev.tier];
-      spawnParticles(ev.atC*cw+cw/2, ev.atR*ch+ch/2, tColor, TIER_BURST[ev.tier], 0);
+      spendParticles(ev.atC*cw+cw/2, ev.atR*ch+ch/2, tColor, TIER_BURST[ev.tier], 0);
       playTierSound(ev.tier);
-      if(ev.tier==='prism') spawnBonusOrb('prism');
-      else if(TIER_RADIUS[ev.tier]) spawnBonusOrb('bomb', TIER_RADIUS[ev.tier]);
+      const giftParticles=Math.min(8, Math.max(0,MAX_PARTICLES-particlesSpawned));
+      if(ev.tier==='prism'){ spawnBonusOrb('prism', undefined, giftParticles); particlesSpawned+=giftParticles; }
+      else if(TIER_RADIUS[ev.tier]){ spawnBonusOrb('bomb', TIER_RADIUS[ev.tier], giftParticles); particlesSpawned+=giftParticles; }
 
       if(kind==='chain'){
         mainTierColor=tColor; mainTierLabel=tLabel;
-      } else {
+      } else if(tierFloatersShown<MAX_TIER_FLOATERS){
+        tierFloatersShown++;
         const tierFloater=document.createElement('div');
         tierFloater.className='floater';
         tierFloater.style.left=(ev.atC*cw+cw/2)+'px';
@@ -1853,13 +1720,23 @@
 
   function finalizeClear(group){
     sparkSvg.innerHTML='';
-    group.forEach(([r,c])=>{ grid[r][c]=null; });
-    for(let c=0;c<COLS;c++){
+    const affectedCols=new Set();
+    group.forEach(([r,c])=>{ grid[r][c]=null; affectedCols.add(c); });
+    affectedCols.forEach(c=>{
       const stack=[];
       for(let r=ROWS;r>=0;r--){ if(grid[r][c]) stack.push(grid[r][c]); }
       for(let r=ROWS;r>=0;r--){ grid[r][c]= stack.length ? stack.shift() : null; }
-    }
-    renderGrid();
+    });
+    // Gravity only ever changes cells in the columns that lost something —
+    // untouched columns don't need to be re-rendered at all, which matters
+    // a lot once the board has grown large.
+    let maxHeight=0;
+    for(let c=0;c<COLS;c++) maxHeight=Math.max(maxHeight, colHeight(c));
+    dangerGlow.classList.toggle('active', maxHeight>=ROWS);
+    affectedCols.forEach(c=>{
+      for(let r=0;r<ROWS+1;r++) renderSingleCell(r,c,false);
+    });
+    positionWarningLine();
     isResolving=false;
     checkGrowth();
   }
@@ -1903,9 +1780,8 @@
   function doSpawn(){
     const elapsed=(Date.now()-startTime)/1000;
     const batchSize=Math.min(2+Math.floor(elapsed/35)+stageIndex,8);
-    const m=MODES[currentMode];
-    const bombChance=m.bombChanceRange[0]+Math.random()*(m.bombChanceRange[1]-m.bombChanceRange[0]);
-    const prismChance=m.prismChanceRange[0]+Math.random()*(m.prismChanceRange[1]-m.prismChanceRange[0]);
+    const bombChance=BOMB_CHANCE_RANGE[0]+Math.random()*(BOMB_CHANCE_RANGE[1]-BOMB_CHANCE_RANGE[0]);
+    const prismChance=PRISM_CHANCE_RANGE[0]+Math.random()*(PRISM_CHANCE_RANGE[1]-PRISM_CHANCE_RANGE[0]);
     const dropSet=new Set();
     let placed=0, guard=0;
     while(placed<batchSize && guard<60){
@@ -1966,7 +1842,7 @@
   }
 
   function goToMainMenu(){
-    if(gameActive && score>bestScores[currentMode]){ bestScores[currentMode]=score; }
+    if(gameActive && score>bestScore){ bestScore=score; }
     savePrefs();
     gameActive=false;
     paused=false;
@@ -1975,7 +1851,7 @@
     pauseOverlay.classList.add('hidden');
     overOverlay.classList.add('hidden');
     startOverlay.classList.remove('hidden');
-    setMode(currentMode);
+    refreshBestDisplay();
   }
 
   document.addEventListener('visibilitychange', ()=>{
@@ -1994,22 +1870,24 @@
       const raw=localStorage.getItem('chainReaction:save');
       if(raw){
         const data=JSON.parse(raw);
-        if(data.bestScores){
-          bestScores=Object.assign({easy:0,medium:0,hard:0}, data.bestScores);
+        if(typeof data.bestScore==='number'){
+          bestScore=data.bestScore;
+        } else if(data.bestScores){
+          // migrate from the old per-difficulty save format
+          bestScore=Math.max(data.bestScores.easy||0, data.bestScores.medium||0, data.bestScores.hard||0);
         } else if(typeof data.highScore==='number'){
-          bestScores={easy:0, medium:0, hard:data.highScore};
+          bestScore=data.highScore;
         }
         soundOn = data.muted!==true;
-        currentMode = (data.lastMode && MODES[data.lastMode]) ? data.lastMode : 'medium';
       }
     }catch(e){ /* no saved data or storage unavailable, use defaults */ }
     muteBtn.textContent = soundOn?'🔊':'🔇';
     muteBtn.setAttribute('aria-pressed', String(!soundOn));
-    setMode(currentMode);
+    refreshBestDisplay();
   }
 
   async function savePrefs(){
-    try{ localStorage.setItem('chainReaction:save', JSON.stringify({bestScores, muted:!soundOn, lastMode:currentMode})); }
+    try{ localStorage.setItem('chainReaction:save', JSON.stringify({bestScore, muted:!soundOn})); }
     catch(e){ /* storage unavailable (e.g. private browsing), continue without persistence */ }
   }
 
@@ -2036,9 +1914,8 @@
     overOverlay.classList.add('hidden');
     cancelPointerGesture();
 
-    const m=MODES[currentMode];
-    const seedBomb=(m.bombChanceRange[0]+m.bombChanceRange[1])/2;
-    const seedPrism=(m.prismChanceRange[0]+m.prismChanceRange[1])/2;
+    const seedBomb=(BOMB_CHANCE_RANGE[0]+BOMB_CHANCE_RANGE[1])/2;
+    const seedPrism=(PRISM_CHANCE_RANGE[0]+PRISM_CHANCE_RANGE[1])/2;
     for(let i=0;i<8;i++){
       const c=Math.floor(Math.random()*COLS);
       const r=landingRow(c);
@@ -2053,26 +1930,17 @@
     paused=false;
     updatePauseVisibility();
     playGameOver();
-    if(score>bestScores[currentMode]){ bestScores[currentMode]=score; }
+    if(score>bestScore){ bestScore=score; }
     savePrefs();
     finalScoreEl.textContent=String(score);
-    finalBestEl.textContent=String(bestScores[currentMode]);
-    bestVal.textContent=String(bestScores[currentMode]).padStart(6,'0');
-    overModeTag.textContent=currentMode.toUpperCase()+' MODE';
+    finalBestEl.textContent=String(bestScore);
+    refreshBestDisplay();
     overOverlay.classList.remove('hidden');
   }
 
   buildCells();
   loadPrefs();
   updatePauseVisibility();
-
-  modePills.forEach(p=>{
-    p.addEventListener('click', ()=>{
-      ensureAudio(); playUIClick();
-      setMode(p.dataset.mode);
-      savePrefs();
-    });
-  });
 
   startBtn.addEventListener('click', ()=>{ ensureAudio(); playUIClick(); startGame(); });
   retryBtn.addEventListener('click', ()=>{ ensureAudio(); playUIClick(); startGame(); });
@@ -2087,12 +1955,6 @@
     doSpawn();
   });
   mainMenuBtn.addEventListener('click', ()=>{ ensureAudio(); playUIClick(); goToMainMenu(); });
-  changeModeBtn.addEventListener('click', ()=>{
-    ensureAudio(); playUIClick();
-    overOverlay.classList.add('hidden');
-    startOverlay.classList.remove('hidden');
-    setMode(currentMode);
-  });
   muteBtn.addEventListener('click', ()=>{
     ensureAudio();
     soundOn=!soundOn;
