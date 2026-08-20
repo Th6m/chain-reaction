@@ -143,6 +143,13 @@
     30%,50%,70%{ transform:translateX(-5px); }
     40%,60%{ transform:translateX(5px); }
   }
+  .stage.shake-big{ animation:shakeBig 480ms; }
+  @keyframes shakeBig{
+    10%,90%{ transform:translate(-2px,1px); }
+    20%,80%{ transform:translate(4px,-1px); }
+    30%,50%,70%{ transform:translate(-8px,2px); }
+    40%,60%{ transform:translate(8px,-2px); }
+  }
 
   .grid-wrap{
     position:relative;
@@ -316,6 +323,41 @@
     0%,100%{ opacity:.6; transform:scale(.88); }
     50%{ opacity:1; transform:scale(1.12); }
   }
+
+  .cell.type-bomb-big{
+    background:radial-gradient(circle at 34% 28%, #4a3550, var(--bomb-core) 72%);
+    box-shadow:0 0 17px -1px var(--accent-coral), inset 0 -4px 8px rgba(0,0,0,.4);
+  }
+  .cell.type-bomb-big::after{
+    content:'✹';
+    position:absolute;
+    inset:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:var(--accent-coral);
+    font-size:min(3.6vw,16px);
+    animation:bombPulse .9s ease-in-out infinite;
+  }
+
+  .cell.type-bomb-mega{
+    background:conic-gradient(from 0deg, var(--bomb-core), #55355f, var(--bomb-core), #3b2f52, var(--bomb-core));
+    box-shadow:0 0 20px -1px var(--accent-violet), 0 0 14px -2px var(--accent-lime), inset 0 -4px 8px rgba(0,0,0,.4);
+    animation:bombMegaSpin 2.2s linear infinite;
+  }
+  .cell.type-bomb-mega::after{
+    content:'✺';
+    position:absolute;
+    inset:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    color:#fff;
+    text-shadow:0 0 7px var(--bomb-spark);
+    font-size:min(3.8vw,17px);
+    animation:bombPulse .7s ease-in-out infinite;
+  }
+  @keyframes bombMegaSpin{ to{ filter:hue-rotate(360deg); } }
 
   .cell.nudge{ animation:nudge 180ms ease; }
   @keyframes nudge{
@@ -787,9 +829,10 @@
   const DRAG_SHOW_THRESHOLD=6;
   const GROWTH_STAGES=[100,1000,5000,10000,20000];
   const PENTATONIC=[0,2,4,7,9,12,14,16,19,21];
-  const TIER_BONUS={surge:120, prism:250, bomb:450};
-  const TIER_LABEL={surge:'SURGE!', prism:'PRISM GIFT!', bomb:'BOMB GIFT!'};
-  const TIER_BURST={surge:6, prism:10, bomb:16};
+  const TIER_BONUS={prism:250, bomb:450, bigbomb:700, megabomb:1000};
+  const TIER_LABEL={prism:'PRISM GIFT!', bomb:'BOMB GIFT!', bigbomb:'BIG BOMB!', megabomb:'MEGA BOMB!'};
+  const TIER_BURST={prism:10, bomb:16, bigbomb:20, megabomb:26};
+  const TIER_RADIUS={bomb:1, bigbomb:2, megabomb:3};
 
   const MODES={
     easy:{
@@ -923,9 +966,10 @@
     tone({freq:520,freqEnd:180,dur:0.14,type:'triangle',gain:0.14,delay:0});
   }
 
-  function playBombBoom(delay){
-    noiseBurst({dur:0.3,gain:0.26,delay,filterFreq:1100});
-    tone({freq:110,freqEnd:45,dur:0.32,type:'sine',gain:0.2,delay});
+  function playBombBoom(delay, radius){
+    const scale=1+((radius||1)-1)*0.35;
+    noiseBurst({dur:0.3*scale, gain:Math.min(0.26*scale,0.42), delay, filterFreq:1100/scale});
+    tone({freq:110/Math.sqrt(scale), freqEnd:45/Math.sqrt(scale), dur:0.32*scale, type:'sine', gain:Math.min(0.2*scale,0.32), delay});
   }
 
   function playComboChime(comboLevel){
@@ -956,9 +1000,7 @@
   }
 
   function playTierSound(tier){
-    if(tier==='surge'){
-      tone({freq:700,freqEnd:1050,dur:0.18,type:'sine',gain:0.14,delay:0});
-    } else if(tier==='prism'){
+    if(tier==='prism'){
       tone({freq:700,dur:0.1,type:'triangle',gain:0.12,delay:0});
       tone({freq:900,dur:0.1,type:'triangle',gain:0.12,delay:0.08});
       tone({freq:1150,dur:0.14,type:'triangle',gain:0.13,delay:0.16});
@@ -968,6 +1010,21 @@
       tone({freq:950,dur:0.1,type:'triangle',gain:0.14,delay:0.16});
       tone({freq:1300,dur:0.22,type:'triangle',gain:0.16,delay:0.24});
       tone({freq:130,freqEnd:60,dur:0.3,type:'sine',gain:0.12,delay:0});
+    } else if(tier==='bigbomb'){
+      tone({freq:500,dur:0.1,type:'triangle',gain:0.15,delay:0});
+      tone({freq:750,dur:0.1,type:'triangle',gain:0.15,delay:0.08});
+      tone({freq:1050,dur:0.1,type:'triangle',gain:0.15,delay:0.16});
+      tone({freq:1450,dur:0.24,type:'triangle',gain:0.17,delay:0.24});
+      tone({freq:1900,dur:0.16,type:'triangle',gain:0.13,delay:0.34});
+      tone({freq:100,freqEnd:40,dur:0.35,type:'sine',gain:0.14,delay:0});
+    } else if(tier==='megabomb'){
+      tone({freq:440,dur:0.09,type:'triangle',gain:0.15,delay:0});
+      tone({freq:660,dur:0.09,type:'triangle',gain:0.15,delay:0.07});
+      tone({freq:880,dur:0.09,type:'triangle',gain:0.15,delay:0.14});
+      tone({freq:1175,dur:0.09,type:'triangle',gain:0.16,delay:0.21});
+      tone({freq:1568,dur:0.22,type:'triangle',gain:0.17,delay:0.28});
+      tone({freq:2093,dur:0.2,type:'sine',gain:0.14,delay:0.38});
+      tone({freq:85,freqEnd:35,dur:0.4,type:'sine',gain:0.16,delay:0});
     }
   }
 
@@ -1018,7 +1075,7 @@
 
   function makeOrb(bombChance,prismChance){
     const roll=Math.random();
-    if(roll<bombChance) return {type:'bomb', color:null};
+    if(roll<bombChance) return {type:'bomb', color:null, radius:1};
     if(roll<bombChance+prismChance) return {type:'prism', color:null};
     return {type:'normal', color:randColor()};
   }
@@ -1073,8 +1130,11 @@
       btn.className='cell type-prism';
       btn.setAttribute('aria-label','prism orb');
     } else {
-      btn.className='cell type-bomb';
-      btn.setAttribute('aria-label','blast orb');
+      const rad=cell.radius||1;
+      const bombCls = rad>=3?'type-bomb-mega':rad>=2?'type-bomb-big':'type-bomb';
+      const bombLabel = rad>=3?'mega blast orb':rad>=2?'big blast orb':'blast orb';
+      btn.className='cell '+bombCls;
+      btn.setAttribute('aria-label',bombLabel);
     }
     if(r===0) btn.classList.add('buffer-row');
     if(dropIn) btn.classList.add('drop-in');
@@ -1131,8 +1191,10 @@
     while(queue.length){
       const [cr,cc,cd]=queue.shift();
       centers.push(cd);
-      for(let dr=-1;dr<=1;dr++){
-        for(let dc=-1;dc<=1;dc++){
+      const centerCell=grid[cr][cc];
+      const rad=(centerCell && centerCell.radius) || 1;
+      for(let dr=-rad;dr<=rad;dr++){
+        for(let dc=-rad;dc<=rad;dc++){
           const nr=cr+dr, nc=cc+dc;
           if(nr<0||nr>ROWS||nc<0||nc>=COLS) continue;
           if(!grid[nr][nc]) continue;
@@ -1155,10 +1217,11 @@
     return {group,edges,depths,centers};
   }
 
-  function simpleBlastArea(r,c){
+  function simpleBlastArea(r,c,radius){
+    const rad=radius||1;
     const group=[];
-    for(let dr=-1;dr<=1;dr++){
-      for(let dc=-1;dc<=1;dc++){
+    for(let dr=-rad;dr<=rad;dr++){
+      for(let dc=-rad;dc<=rad;dc++){
         const nr=r+dr, nc=c+dc;
         if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS&&grid[nr][nc]) group.push([nr,nc]);
       }
@@ -1177,16 +1240,19 @@
     return bestColor;
   }
 
-  function spawnBonusOrb(type){
+  function spawnBonusOrb(type,radius){
     const candidates=[];
     for(let c=0;c<COLS;c++){ if(landingRow(c)>=0) candidates.push(c); }
     if(!candidates.length) return;
     const c=candidates[Math.floor(Math.random()*candidates.length)];
     const r=landingRow(c);
-    grid[r][c]={type, color:null};
+    const rad=radius||1;
+    grid[r][c] = type==='bomb' ? {type:'bomb', color:null, radius:rad} : {type, color:null};
     renderSingleCell(r,c,true);
     const {cw,ch}=cellMetrics();
-    spawnParticles(c*cw+cw/2, r*ch+ch/2, type==='bomb'?'var(--bomb-spark)':'var(--accent-violet)', 8, 0);
+    let particleColor='var(--accent-violet)';
+    if(type==='bomb') particleColor = rad>=3?'var(--accent-lime)':rad>=2?'var(--accent-coral)':'var(--bomb-spark)';
+    spawnParticles(c*cw+cw/2, r*ch+ch/2, particleColor, 8, 0);
   }
 
   /* ================= Input: tap vs drag ================= */
@@ -1271,7 +1337,7 @@
           setPreviewGroup([[r,c]],'preview-blast');
         }
       } else {
-        setPreviewGroup(simpleBlastArea(r,c),'preview-blast');
+        setPreviewGroup(simpleBlastArea(r,c,cellVal.radius||1),'preview-blast');
       }
       return;
     }
@@ -1477,18 +1543,20 @@
 
   function resolveBombDrag(r,c){
     const {group,edges,depths,centers}=computeBombChain(r,c);
-    resolveGroup(group,edges,depths,'bomb',r,c,{fizzle:false, centers});
+    const originRadius=(grid[r][c] && grid[r][c].radius) || 1;
+    resolveGroup(group,edges,depths,'bomb',r,c,{fizzle:false, centers, radius:originRadius});
   }
 
   function resolveBombSimple(r,c){
-    const group=simpleBlastArea(r,c);
+    const rad=(grid[r][c] && grid[r][c].radius) || 1;
+    const group=simpleBlastArea(r,c,rad);
     const edges=[]; const depths={};
     group.forEach(([gr,gc])=>{
       const isCenter=(gr===r&&gc===c);
       depths[gr+'_'+gc]=isCenter?0:1;
       if(!isCenter) edges.push({from:[r,c], to:[gr,gc], depth:0});
     });
-    resolveGroup(group,edges,depths,'bomb',r,c,{fizzle:false, centers:[0]});
+    resolveGroup(group,edges,depths,'bomb',r,c,{fizzle:false, centers:[0], radius:rad});
   }
 
   /* ================= Resolution ================= */
@@ -1505,9 +1573,10 @@
 
     let tier=null;
     if(kind==='chain'){
-      if(group.length>=7) tier='bomb';
-      else if(group.length>=6) tier='prism';
-      else if(group.length>=5) tier='surge';
+      if(group.length>=8) tier='megabomb';
+      else if(group.length>=7) tier='bigbomb';
+      else if(group.length>=6) tier='bomb';
+      else if(group.length>=5) tier='prism';
     }
     if(tier) points+=TIER_BONUS[tier];
 
@@ -1532,7 +1601,8 @@
       const cell=grid[r][c];
       if(cell.type==='normal') return `var(--accent-${cell.color})`;
       if(cell.type==='prism') return 'var(--accent-teal)';
-      return 'var(--bomb-spark)';
+      const rad=cell.radius||1;
+      return rad>=3?'var(--accent-lime)':rad>=2?'var(--accent-coral)':'var(--bomb-spark)';
     };
 
     let maxDepth=0;
@@ -1559,7 +1629,8 @@
       if(extra && extra.fizzle) playBombFizzle();
       else{
         const centers=(extra && extra.centers) ? extra.centers : [0];
-        centers.forEach(d=> playBombBoom(d*STEP_MS/1000));
+        const bombRadius=(extra && extra.radius) || 1;
+        centers.forEach(d=> playBombBoom(d*STEP_MS/1000, bombRadius));
       }
     }
 
@@ -1575,13 +1646,13 @@
 
     let tierColor=null, tierLabel=null;
     if(tier){
-      const tierColors={surge:'var(--accent-lime)', prism:'var(--accent-violet)', bomb:'var(--bomb-spark)'};
+      const tierColors={prism:'var(--accent-violet)', bomb:'var(--bomb-spark)', bigbomb:'var(--accent-coral)', megabomb:'var(--accent-lime)'};
       tierColor=tierColors[tier];
       tierLabel=TIER_LABEL[tier];
       spawnParticles(clickC*cw+cw/2, clickR*ch+ch/2, tierColor, TIER_BURST[tier], 0);
       playTierSound(tier);
       if(tier==='prism') spawnBonusOrb('prism');
-      if(tier==='bomb') spawnBonusOrb('bomb');
+      else if(TIER_RADIUS[tier]) spawnBonusOrb('bomb', TIER_RADIUS[tier]);
     }
 
     const floater=document.createElement('div');
@@ -1594,7 +1665,12 @@
     floatersLayer.appendChild(floater);
     setTimeout(()=>floater.remove(), tier?1200:950);
 
-    if(group.length>=6 || kind==='bomb'){
+    if(kind==='bomb'){
+      const bombRadius=(extra && extra.radius) || 1;
+      stage.classList.remove('shake','shake-big');
+      void stage.offsetWidth;
+      stage.classList.add(bombRadius>=2?'shake-big':'shake');
+    } else if(group.length>=6){
       stage.classList.remove('shake');
       void stage.offsetWidth;
       stage.classList.add('shake');
