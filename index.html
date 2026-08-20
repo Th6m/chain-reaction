@@ -300,9 +300,7 @@
   .cell.type-prism{
     background:conic-gradient(from 0deg, var(--accent-coral), var(--accent-amber), var(--accent-lime), var(--accent-teal), var(--accent-violet), var(--accent-coral));
     box-shadow:0 0 12px -1px rgba(255,255,255,.5), inset 0 -4px 7px rgba(0,0,0,.25);
-    animation:prismHue 3s linear infinite;
   }
-  @keyframes prismHue{ from{ filter:hue-rotate(0deg); } to{ filter:hue-rotate(360deg); } }
 
   .cell.type-bomb{
     background:radial-gradient(circle at 34% 28%, #3b4258, var(--bomb-core) 72%);
@@ -343,7 +341,6 @@
   .cell.type-bomb-mega{
     background:conic-gradient(from 0deg, var(--bomb-core), #55355f, var(--bomb-core), #3b2f52, var(--bomb-core));
     box-shadow:0 0 20px -1px var(--accent-violet), 0 0 14px -2px var(--accent-lime), inset 0 -4px 8px rgba(0,0,0,.4);
-    animation:bombMegaSpin 2.2s linear infinite;
   }
   .cell.type-bomb-mega::after{
     content:'✺';
@@ -357,7 +354,6 @@
     font-size:min(3.8vw,17px);
     animation:bombPulse .7s ease-in-out infinite;
   }
-  @keyframes bombMegaSpin{ to{ filter:hue-rotate(360deg); } }
 
   .cell.nudge{ animation:nudge 180ms ease; }
   @keyframes nudge{
@@ -379,7 +375,7 @@
   }
   @keyframes popAnim{
     0%{ transform:scale(1); opacity:1; }
-    25%{ transform:scale(1.32); opacity:1; filter:brightness(1.7); }
+    25%{ transform:scale(1.32); opacity:1; }
     100%{ transform:scale(.15); opacity:0; }
   }
 
@@ -391,7 +387,6 @@
     stroke-dasharray:1;
     stroke-dashoffset:1;
     opacity:.9;
-    filter:drop-shadow(0 0 5px currentColor);
     animation:sparkTravel var(--dur,320ms) ease-out var(--delay,0ms) forwards;
   }
   @keyframes sparkTravel{
@@ -429,7 +424,7 @@
     top:var(--y);
     background:var(--pc);
     opacity:0;
-    box-shadow:0 0 6px var(--pc);
+    box-shadow:0 0 3px var(--pc);
     animation:particleFly 560ms ease-out forwards;
     animation-delay:var(--delay,0ms);
   }
@@ -1099,15 +1094,24 @@
     }
   }
 
-  function renderGrid(dropSet){
+  function renderGrid(dropSet, cellsOnly){
     dropSet = dropSet || new Set();
     let maxHeight=0;
     for(let c=0;c<COLS;c++) maxHeight=Math.max(maxHeight, colHeight(c));
     dangerGlow.classList.toggle('active', maxHeight>=ROWS);
 
-    for(let r=0;r<ROWS+1;r++){
-      for(let c=0;c<COLS;c++){
-        renderSingleCell(r,c, dropSet.has(r+'_'+c));
+    if(cellsOnly){
+      // Only touch the handful of cells that actually changed (e.g. a spawn
+      // wave) instead of rewriting every cell on the board every time.
+      dropSet.forEach(key=>{
+        const [r,c]=key.split('_').map(Number);
+        renderSingleCell(r,c,true);
+      });
+    } else {
+      for(let r=0;r<ROWS+1;r++){
+        for(let c=0;c<COLS;c++){
+          renderSingleCell(r,c, dropSet.has(r+'_'+c));
+        }
       }
     }
     positionWarningLine();
@@ -1606,7 +1610,12 @@
     };
 
     let maxDepth=0;
+    const MAX_LINES=40;
+    let lineCount=0;
     edges.forEach(edge=>{
+      maxDepth=Math.max(maxDepth, edge.depth+1);
+      if(lineCount>=MAX_LINES) return; // cap DOM cost on huge blasts/chains
+      lineCount++;
       const [fr,fc]=edge.from, [tr,tc]=edge.to;
       const line=document.createElementNS('http://www.w3.org/2000/svg','line');
       line.setAttribute('x1', fc*cw+cw/2);
@@ -1620,10 +1629,11 @@
       line.style.stroke=colorFor(tr,tc);
       line.style.color=colorFor(tr,tc);
       sparkSvg.appendChild(line);
-      maxDepth=Math.max(maxDepth, edge.depth+1);
     });
 
     const particleBudget = group.length>18?2:group.length>10?3:5;
+    const MAX_PARTICLES=48;
+    let particlesSpawned=0;
 
     if(kind==='bomb'){
       if(extra && extra.fizzle) playBombFizzle();
@@ -1640,7 +1650,11 @@
       const btn=cellButtons[r][c];
       btn.style.setProperty('--pop-delay',(d*STEP_MS)+'ms');
       btn.classList.add('popping');
-      spawnParticles(c*cw+cw/2, r*ch+ch/2, colorFor(r,c), particleBudget, d*STEP_MS);
+      const budget=Math.min(particleBudget, MAX_PARTICLES-particlesSpawned);
+      if(budget>0){
+        spawnParticles(c*cw+cw/2, r*ch+ch/2, colorFor(r,c), budget, d*STEP_MS);
+        particlesSpawned+=budget;
+      }
       if(kind!=='bomb') playPopTone(d);
     });
 
@@ -1763,7 +1777,7 @@
       dropSet.add(r+'_'+c);
       placed++;
     }
-    renderGrid(dropSet);
+    renderGrid(dropSet, true);
     playSpawnTick();
 
     let anyRoom=false;
