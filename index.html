@@ -30,6 +30,11 @@
     --danger:#FF3B4E;
     --bomb-core:#232A3D;
     --bomb-spark:#FFD166;
+    /* Mobile-only adaptive visual quality. Multiplier for every glow blur
+       radius below; JS (see qualityTier in the script) only ever lowers it on
+       touch devices once the grid has grown. On desktop it stays at 1, so each
+       calc() resolves to exactly the original hardcoded px value. */
+    --glow-blur-scale:1;
     --font-display:'Space Grotesk',sans-serif;
     --font-body:'Inter',sans-serif;
     --font-mono:'JetBrains Mono',monospace;
@@ -156,7 +161,10 @@
     position:absolute;
     inset:0;
     border-radius:18px;
-    background:radial-gradient(ellipse 100% 26% at 50% 0%, rgba(255,59,78,.35), transparent 70%);
+    /* Mobile-only adaptive quality: this glow is a gradient rather than a
+       box-shadow, so the scale shrinks its soft falloff (the "blur" here)
+       instead of a blur radius. Colour stops are untouched. */
+    background:radial-gradient(ellipse 100% calc(26% * var(--glow-blur-scale)) at 50% 0%, rgba(255,59,78,.35), transparent 70%);
     opacity:0;
     transition:opacity .5s ease;
     pointer-events:none;
@@ -268,7 +276,8 @@
 
   .cell[class*="c-"]{
     background:radial-gradient(circle at 32% 26%, color-mix(in srgb, var(--orb) 50%, white 50%), var(--orb) 66%);
-    box-shadow:0 0 10px -1px color-mix(in srgb, var(--orb) 70%, transparent 30%), inset 0 -4px 7px rgba(0,0,0,.28);
+    /* blur radius is scaled by mobile adaptive quality; colour/spread fixed */
+    box-shadow:0 0 calc(10px * var(--glow-blur-scale)) -1px color-mix(in srgb, var(--orb) 70%, transparent 30%), inset 0 -4px 7px rgba(0,0,0,.28);
   }
   .cell.c-coral{ --orb:var(--accent-coral); }
   .cell.c-amber{ --orb:var(--accent-amber); }
@@ -278,12 +287,12 @@
 
   .cell.type-prism{
     background:conic-gradient(from 0deg, var(--accent-coral), var(--accent-amber), var(--accent-lime), var(--accent-teal), var(--accent-violet), var(--accent-coral));
-    box-shadow:0 0 12px -1px rgba(255,255,255,.5), inset 0 -4px 7px rgba(0,0,0,.25);
+    box-shadow:0 0 calc(12px * var(--glow-blur-scale)) -1px rgba(255,255,255,.5), inset 0 -4px 7px rgba(0,0,0,.25);
   }
 
   .cell.type-bomb{
     background:radial-gradient(circle at 34% 28%, #3b4258, var(--bomb-core) 72%);
-    box-shadow:0 0 14px -2px var(--bomb-spark), inset 0 -4px 8px rgba(0,0,0,.4);
+    box-shadow:0 0 calc(14px * var(--glow-blur-scale)) -2px var(--bomb-spark), inset 0 -4px 8px rgba(0,0,0,.4);
   }
   .cell.type-bomb::after{
     content:'✺';
@@ -301,9 +310,20 @@
     50%{ opacity:1; transform:scale(1.12); }
   }
 
+  /* Mobile-only adaptive quality: the bomb glyphs pulse forever, which keeps
+     repainting even when the board is idle. JS adds .q-freeze-bombs to the grid
+     on touch devices once qualityTier is high enough and several bombs share
+     the board (never on desktop). The glyph settles at full size/opacity so a
+     bomb still reads as a bomb -- it just stops being permanently mid-pulse. */
+  .grid.q-freeze-bombs .cell.type-bomb::after,
+  .grid.q-freeze-bombs .cell.type-bomb-big::after,
+  .grid.q-freeze-bombs .cell.type-bomb-mega::after{
+    animation:none;
+  }
+
   .cell.type-bomb-big{
     background:radial-gradient(circle at 34% 28%, #4a3550, var(--bomb-core) 72%);
-    box-shadow:0 0 17px -1px var(--accent-coral), inset 0 -4px 8px rgba(0,0,0,.4);
+    box-shadow:0 0 calc(17px * var(--glow-blur-scale)) -1px var(--accent-coral), inset 0 -4px 8px rgba(0,0,0,.4);
   }
   .cell.type-bomb-big::after{
     content:'✹';
@@ -319,7 +339,7 @@
 
   .cell.type-bomb-mega{
     background:conic-gradient(from 0deg, var(--bomb-core), #55355f, var(--bomb-core), #3b2f52, var(--bomb-core));
-    box-shadow:0 0 20px -1px var(--accent-violet), 0 0 14px -2px var(--accent-lime), inset 0 -4px 8px rgba(0,0,0,.4);
+    box-shadow:0 0 calc(20px * var(--glow-blur-scale)) -1px var(--accent-violet), 0 0 calc(14px * var(--glow-blur-scale)) -2px var(--accent-lime), inset 0 -4px 8px rgba(0,0,0,.4);
   }
   .cell.type-bomb-mega::after{
     content:'✺';
@@ -807,6 +827,78 @@
   let previewKeys=new Set();
   let previewClassUsed=null;
 
+  /* ============ Mobile-only adaptive visual quality ============
+     Late-game boards grow (more glowing cells, more particles, more bombs
+     pulsing forever) and phones start dropping frames. Desktop is already
+     fine, so every quality reduction below is gated behind isMobile and MUST
+     collapse to "tier 0 == the original look" when it is false. This is not
+     dead code: it only engages on touch devices at higher stageIndex. */
+  const isMobile=(function(){
+    try{
+      const mm=window.matchMedia;
+      // Feature-test the pointing device instead of sniffing the UA string: a
+      // coarse / hover-less primary pointer combined with real touch points
+      // means phone or tablet, while a touchscreen laptop still reports a fine
+      // primary pointer and so stays on the desktop path.
+      const coarse=!!(mm && (mm('(pointer: coarse)').matches || mm('(hover: none)').matches));
+      const touch=(navigator.maxTouchPoints||0)>0 || 'ontouchstart' in window;
+      return coarse && touch;
+    }catch(e){ return false; }
+  })();
+
+  // Both indexed by qualityTier; index 0 is the untouched desktop quality.
+  const QUALITY_GLOW_SCALE=[1, 0.7, 0.45];
+  const QUALITY_PARTICLE_SCALE=[1, 0.65, 0.45];
+  // stageIndex breakpoints. GROWTH_STAGES has 5 entries so stageIndex tops out
+  // at 5: full quality for the first two grid sizes, then one step down at
+  // each of these, i.e. tier 1 at stageIndex 2-3 and tier 2 at stageIndex 4+.
+  const QUALITY_TIER_STAGES=[2,4];
+  const BOMB_FREEZE_MIN_TIER=1;   // freeze the idle bomb pulse from this tier up
+  const BOMB_FREEZE_MIN_BOMBS=3;  // ...once this many bombs share the board
+  let qualityTier=0;
+
+  /* Recomputed wherever stageIndex changes (growGrid via checkGrowth, and the
+     reset in startGame). Always resolves to 0 on desktop. */
+  function updateQualityTier(){
+    let tier=0;
+    if(isMobile){
+      for(let i=0;i<QUALITY_TIER_STAGES.length;i++){
+        if(stageIndex>=QUALITY_TIER_STAGES[i]) tier=i+1;
+      }
+    }
+    if(tier===qualityTier) return;
+    qualityTier=tier;
+    // Every glow blur radius in the stylesheet is calc()'d against this.
+    document.documentElement.style.setProperty('--glow-blur-scale', String(QUALITY_GLOW_SCALE[qualityTier]));
+    updateBombPulseQuality();
+  }
+
+  /* Mobile-only adaptive quality: thins a particle count at higher tiers.
+     Exact identity function on desktop (qualityTier is pinned to 0 there). */
+  function qualityParticles(n){
+    const f=QUALITY_PARTICLE_SCALE[qualityTier];
+    if(!(f<1)) return n;
+    return n>0 ? Math.max(1, Math.round(n*f)) : n;
+  }
+
+  /* Mobile-only adaptive quality: toggles the CSS class that stops the idle
+     bomb pulse. Cheap enough to call on every render -- on desktop and at low
+     tiers it never even scans the board. The count only has to be roughly
+     right, so an early exit at the threshold is plenty. */
+  function updateBombPulseQuality(){
+    let freeze=false;
+    if(qualityTier>=BOMB_FREEZE_MIN_TIER && grid){
+      let bombs=0;
+      for(let r=0;r<grid.length && !freeze;r++){
+        const row=grid[r];
+        for(let c=0;c<row.length;c++){
+          if(row[c] && row[c].type==='bomb' && ++bombs>=BOMB_FREEZE_MIN_BOMBS){ freeze=true; break; }
+        }
+      }
+    }
+    gridEl.classList.toggle('q-freeze-bombs', freeze);
+  }
+
   /* ================= Audio ================= */
   function ensureAudio(){
     if(!audioCtx){
@@ -999,6 +1091,7 @@
         }
       }
     }
+    updateBombPulseQuality(); // mobile-only adaptive quality (bomb count changed)
     positionWarningLine();
   }
 
@@ -1245,6 +1338,7 @@
     const rad=radius||1;
     grid[r][c] = type==='bomb' ? {type:'bomb', color:null, radius:rad} : {type, color:null};
     renderSingleCell(r,c,true);
+    updateBombPulseQuality(); // mobile-only adaptive quality (a bomb may have spawned)
     const {cw,ch}=cellMetrics();
     let particleColor='var(--accent-violet)';
     if(type==='bomb') particleColor = rad>=3?'var(--accent-lime)':rad>=2?'var(--accent-coral)':'var(--bomb-spark)';
@@ -1643,7 +1737,10 @@
       sparkSvg.appendChild(line);
     });
 
-    const particleBudget = group.length>18?2:group.length>10?3:5;
+    /* Mobile-only adaptive quality: qualityParticles() is the identity on
+       desktop (qualityTier 0) and thins bursts out at higher mobile tiers.
+       MAX_PARTICLES stays a hard ceiling on every device regardless. */
+    const particleBudget = qualityParticles(group.length>18?2:group.length>10?3:5);
     const MAX_PARTICLES=56;
     let particlesSpawned=0;
     const spendParticles=(x,y,color,want,delay)=>{
@@ -1674,9 +1771,10 @@
     tierEvents.forEach(ev=>{
       const tColor=tierColors[ev.tier];
       const tLabel=TIER_LABEL[ev.tier];
-      spendParticles(ev.atC*cw+cw/2, ev.atR*ch+ch/2, tColor, TIER_BURST[ev.tier], 0);
+      // mobile-only adaptive quality: lighter tier-gift burst at higher tiers
+      spendParticles(ev.atC*cw+cw/2, ev.atR*ch+ch/2, tColor, qualityParticles(TIER_BURST[ev.tier]), 0);
       playTierSound(ev.tier);
-      const giftParticles=Math.min(8, Math.max(0,MAX_PARTICLES-particlesSpawned));
+      const giftParticles=Math.min(qualityParticles(8), Math.max(0,MAX_PARTICLES-particlesSpawned));
       if(ev.tier==='prism'){ spawnBonusOrb('prism', undefined, giftParticles); particlesSpawned+=giftParticles; }
       else if(TIER_RADIUS[ev.tier]){ spawnBonusOrb('bomb', TIER_RADIUS[ev.tier], giftParticles); particlesSpawned+=giftParticles; }
 
@@ -1754,6 +1852,7 @@
     affectedCols.forEach(c=>{
       for(let r=0;r<ROWS+1;r++) renderSingleCell(r,c,false);
     });
+    updateBombPulseQuality(); // mobile-only adaptive quality (bombs may have popped/spawned)
     positionWarningLine();
     isResolving=false;
     checkGrowth();
@@ -1777,6 +1876,7 @@
       }
     }
     grid=next;
+    updateQualityTier(); // mobile-only adaptive quality: stageIndex just grew
     gridEl.style.setProperty('--cols',COLS);
     gridEl.style.setProperty('--rows',ROWS+1);
     gridWrap.style.aspectRatio=COLS+'/'+(ROWS+1);
@@ -1913,6 +2013,7 @@
   /* ================= Game flow ================= */
   function startGame(){
     COLS=BASE_COLS; ROWS=BASE_ROWS; stageIndex=0;
+    updateQualityTier(); // mobile-only adaptive quality: stageIndex reset to 0
     gridEl.style.setProperty('--cols',COLS);
     gridEl.style.setProperty('--rows',ROWS+1);
     gridWrap.style.aspectRatio=COLS+'/'+(ROWS+1);
