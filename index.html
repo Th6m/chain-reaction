@@ -171,6 +171,23 @@
     50%{ opacity:1; }
   }
 
+  .warning-line{
+    position:absolute;
+    left:clamp(6px,1.4vw,10px);
+    right:clamp(6px,1.4vw,10px);
+    top:0;
+    height:0;
+    border-top:2px dashed var(--danger);
+    opacity:.5;
+    pointer-events:none;
+    filter:drop-shadow(0 0 4px var(--danger));
+    z-index:2;
+  }
+
+  .cell.buffer-row.empty{
+    background:rgba(255,59,78,0.05);
+  }
+
   .grid{
     position:relative;
     width:100%;
@@ -461,6 +478,30 @@
     transition:width .1s linear;
   }
 
+  .surge-row{
+    display:flex;
+    justify-content:center;
+  }
+  .surge-btn{
+    width:clamp(52px,13vw,68px);
+    aspect-ratio:1;
+    border-radius:50%;
+    border:none;
+    background:conic-gradient(from 0deg, var(--accent-teal), var(--accent-violet), var(--accent-teal));
+    color:#0B0E16;
+    font-size:clamp(22px,6vw,28px);
+    line-height:1;
+    cursor:pointer;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    box-shadow:0 0 20px -4px var(--accent-teal);
+    transition:transform .12s ease, box-shadow .15s ease;
+  }
+  .surge-btn:hover{ transform:scale(1.08); box-shadow:0 0 28px -2px var(--accent-violet); }
+  .surge-btn:active{ transform:scale(.92); }
+  .surge-btn:focus-visible{ outline:2px solid var(--text-primary); outline-offset:3px; }
+
   /* ---------- Legend ---------- */
   .legend{
     display:flex;
@@ -666,6 +707,7 @@
     <div class="grid-wrap" id="gridWrap">
       <div class="danger-glow" id="dangerGlow"></div>
       <div class="grid" id="grid"></div>
+      <div class="warning-line" id="warningLine"></div>
       <svg class="spark-overlay" id="sparkSvg"></svg>
       <div class="particles-layer" id="particlesLayer"></div>
       <div class="floaters-layer" id="floatersLayer"></div>
@@ -673,6 +715,10 @@
         <line id="dragLine" class="drag-line"></line>
         <circle id="dragPuck" class="drag-puck" r="6"></circle>
       </svg>
+    </div>
+
+    <div class="surge-row">
+      <button class="surge-btn" id="surgeBtn" aria-label="Trigger next surge now">⚡</button>
     </div>
 
     <div class="combo-row">
@@ -701,7 +747,7 @@
       </div>
       <div class="mode-best" id="modeBest">BEST 000000</div>
       <button class="orb-button" id="startBtn" aria-label="Start game"></button>
-      <p class="hint">Click groups of 2+ matching orbs to trigger a chain — longer chains score far more.<br>Chains of 5+ trigger bonus rewards: 6 gifts a free prism, 7+ gifts a free bomb.<br>In Medium and Hard, drag blast and prism orbs to aim them.</p>
+      <p class="hint">Click groups of 2+ matching orbs to trigger a chain — longer chains score far more.<br>Chains of 5+ trigger bonus rewards: 6 gifts a free prism, 7+ gifts a free bomb.<br>In Medium and Hard, drag blast and prism orbs to aim them.<br>The dashed line marks the danger zone — it's only over when a column overflows above it. Tap ⚡ to skip the wait for the next surge.</p>
     </div>
   </div>
 
@@ -733,7 +779,7 @@
 <script>
 (function(){
   "use strict";
-  const BASE_COLS=6, BASE_ROWS=8;
+  const BASE_COLS=6, BASE_ROWS=7;
   let COLS=BASE_COLS, ROWS=BASE_ROWS;
   const COLORS=['coral','amber','teal','violet','lime'];
   const STEP_MS=85, POP_MS=380;
@@ -772,6 +818,8 @@
   const particlesLayer=document.getElementById('particlesLayer');
   const floatersLayer=document.getElementById('floatersLayer');
   const dangerGlow=document.getElementById('dangerGlow');
+  const warningLine=document.getElementById('warningLine');
+  const surgeBtn=document.getElementById('surgeBtn');
   const scoreVal=document.getElementById('scoreVal');
   const bestVal=document.getElementById('bestVal');
   const comboLabel=document.getElementById('comboLabel');
@@ -808,6 +856,8 @@
   let pointerStart=null;
   let lastPointerHandled=null;
   let bombArmedKey=null;
+  let lastSurgeAt=0;
+  const SURGE_COOLDOWN=400;
   let previewKeys=new Set();
   let previewClassUsed=null;
 
@@ -945,19 +995,23 @@
       : 'auto-bonds with its most common neighbour colour';
   }
 
-  /* ================= Grid state ================= */
-  function newGrid(){ return Array.from({length:ROWS},()=>Array(COLS).fill(null)); }
+  /* ================= Grid state =================
+     Rows are indexed 0..ROWS (that's ROWS+1 rows total).
+     Row 0 is a visible "buffer" row above the warning line — landing
+     there is a warning, not game over. The game only ends when a
+     column has no room even in the buffer row (see doSpawn). */
+  function newGrid(){ return Array.from({length:ROWS+1},()=>Array(COLS).fill(null)); }
 
   function colHeight(c){
     let h=0;
-    for(let r=ROWS-1;r>=0;r--){ if(grid[r][c]) h++; else break; }
+    for(let r=ROWS;r>=0;r--){ if(grid[r][c]) h++; else break; }
     return h;
   }
 
   function landingRow(c){
     const h=colHeight(c);
-    if(h>=ROWS) return -1;
-    return ROWS-1-h;
+    if(h>=ROWS+1) return -1;
+    return ROWS-h;
   }
 
   function randColor(){ return COLORS[Math.floor(Math.random()*COLORS.length)]; }
@@ -972,12 +1026,12 @@
   function buildCells(){
     gridEl.innerHTML='';
     cellButtons=[];
-    for(let r=0;r<ROWS;r++){
+    for(let r=0;r<ROWS+1;r++){
       const row=[];
       for(let c=0;c<COLS;c++){
         const btn=document.createElement('button');
         btn.type='button';
-        btn.className='cell empty';
+        btn.className='cell empty'+(r===0?' buffer-row':'');
         btn.dataset.r=r;
         btn.dataset.c=c;
         btn.setAttribute('aria-label','empty cell');
@@ -992,13 +1046,14 @@
     dropSet = dropSet || new Set();
     let maxHeight=0;
     for(let c=0;c<COLS;c++) maxHeight=Math.max(maxHeight, colHeight(c));
-    dangerGlow.classList.toggle('active', maxHeight>=ROWS-2);
+    dangerGlow.classList.toggle('active', maxHeight>=ROWS);
 
-    for(let r=0;r<ROWS;r++){
+    for(let r=0;r<ROWS+1;r++){
       for(let c=0;c<COLS;c++){
         renderSingleCell(r,c, dropSet.has(r+'_'+c));
       }
     }
+    positionWarningLine();
   }
 
   function renderSingleCell(r,c,dropIn){
@@ -1007,7 +1062,7 @@
     if(!btn) return;
     btn.style.removeProperty('--pop-delay');
     if(!cell){
-      btn.className='cell empty';
+      btn.className='cell empty'+(r===0?' buffer-row':'');
       btn.setAttribute('aria-label','empty cell');
       return;
     }
@@ -1021,18 +1076,24 @@
       btn.className='cell type-bomb';
       btn.setAttribute('aria-label','blast orb');
     }
+    if(r===0) btn.classList.add('buffer-row');
     if(dropIn) btn.classList.add('drop-in');
+  }
+
+  function positionWarningLine(){
+    const {ch}=cellMetrics();
+    warningLine.style.top=ch+'px';
   }
 
   function cellMetrics(){
     const rect=gridEl.getBoundingClientRect();
-    return {cw:rect.width/COLS, ch:rect.height/ROWS, rect};
+    return {cw:rect.width/COLS, ch:rect.height/(ROWS+1), rect};
   }
 
   function neighbors(r,c){
     const out=[];
     if(r>0) out.push([r-1,c]);
-    if(r<ROWS-1) out.push([r+1,c]);
+    if(r<ROWS) out.push([r+1,c]);
     if(c>0) out.push([r,c-1]);
     if(c<COLS-1) out.push([r,c+1]);
     return out;
@@ -1073,7 +1134,7 @@
       for(let dr=-1;dr<=1;dr++){
         for(let dc=-1;dc<=1;dc++){
           const nr=cr+dr, nc=cc+dc;
-          if(nr<0||nr>=ROWS||nc<0||nc>=COLS) continue;
+          if(nr<0||nr>ROWS||nc<0||nc>=COLS) continue;
           if(!grid[nr][nc]) continue;
           const key=nr+'_'+nc;
           const isCenterCell=(dr===0&&dc===0);
@@ -1099,7 +1160,7 @@
     for(let dr=-1;dr<=1;dr++){
       for(let dc=-1;dc<=1;dc++){
         const nr=r+dr, nc=c+dc;
-        if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&grid[nr][nc]) group.push([nr,nc]);
+        if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS&&grid[nr][nc]) group.push([nr,nc]);
       }
     }
     return group;
@@ -1220,7 +1281,7 @@
       if(m.prismAdvanced && dist>=DRAG_SHOW_THRESHOLD){
         const dir=primaryDirection(dx,dy);
         const nr=r+dir.dr, nc=c+dir.dc;
-        if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS){
+        if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS){
           const nb=grid[nr][nc];
           if(nb && nb.type==='normal') targetColor=nb.color;
         }
@@ -1286,7 +1347,7 @@
         const dir=primaryDirection(dx,dy);
         const nr=r+dir.dr, nc=c+dir.dc;
         let targetColor=null;
-        if(nr>=0&&nr<ROWS&&nc>=0&&nc<COLS){
+        if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS){
           const nb=grid[nr][nc];
           if(nb && nb.type==='normal') targetColor=`var(--accent-${nb.color})`;
         }
@@ -1399,7 +1460,7 @@
 
   function resolvePrismDrag(r,c,dir){
     const nr=r+dir.dr, nc=c+dir.dc;
-    if(nr<0||nr>=ROWS||nc<0||nc>=COLS){ shakeCell(r,c); return; }
+    if(nr<0||nr>ROWS||nc<0||nc>=COLS){ shakeCell(r,c); return; }
     const neighbor=grid[nr][nc];
     if(!neighbor||neighbor.type!=='normal'){ shakeCell(r,c); return; }
     const {group,edges,depths}=floodFill(r,c,neighbor.color);
@@ -1565,8 +1626,8 @@
     group.forEach(([r,c])=>{ grid[r][c]=null; });
     for(let c=0;c<COLS;c++){
       const stack=[];
-      for(let r=ROWS-1;r>=0;r--){ if(grid[r][c]) stack.push(grid[r][c]); }
-      for(let r=ROWS-1;r>=0;r--){ grid[r][c]= stack.length ? stack.shift() : null; }
+      for(let r=ROWS;r>=0;r--){ if(grid[r][c]) stack.push(grid[r][c]); }
+      for(let r=ROWS;r>=0;r--){ grid[r][c]= stack.length ? stack.shift() : null; }
     }
     renderGrid();
     isResolving=false;
@@ -1584,16 +1645,16 @@
   function growGrid(){
     const oldCols=COLS, oldRows=ROWS, oldGrid=grid;
     COLS=oldCols+1; ROWS=oldRows+1;
-    const next=Array.from({length:ROWS},()=>Array(COLS).fill(null));
-    for(let r=0;r<oldRows;r++){
+    const next=Array.from({length:ROWS+1},()=>Array(COLS).fill(null));
+    for(let r=0;r<=oldRows;r++){
       for(let c=0;c<oldCols;c++){
         next[r+1][c]=oldGrid[r][c];
       }
     }
     grid=next;
     gridEl.style.setProperty('--cols',COLS);
-    gridEl.style.setProperty('--rows',ROWS);
-    gridWrap.style.aspectRatio=COLS+'/'+ROWS;
+    gridEl.style.setProperty('--rows',ROWS+1);
+    gridWrap.style.aspectRatio=COLS+'/'+(ROWS+1);
     buildCells();
     renderGrid();
     flashExpand();
@@ -1629,9 +1690,9 @@
     renderGrid(dropSet);
     playSpawnTick();
 
-    let overflowed=false;
-    for(let c=0;c<COLS;c++){ if(grid[0][c]){ overflowed=true; break; } }
-    if(overflowed){ endGame(); return; }
+    let anyRoom=false;
+    for(let c=0;c<COLS;c++){ if(landingRow(c)>=0){ anyRoom=true; break; } }
+    if(!anyRoom){ endGame(); return; }
     scheduleSpawn();
   }
 
@@ -1653,6 +1714,7 @@
   /* ================= Pause / menu ================= */
   function updatePauseVisibility(){
     pauseBtn.style.display = gameActive ? 'flex' : 'none';
+    surgeBtn.style.display = gameActive ? 'flex' : 'none';
   }
 
   function pauseGame(){
@@ -1725,8 +1787,8 @@
   function startGame(){
     COLS=BASE_COLS; ROWS=BASE_ROWS; stageIndex=0;
     gridEl.style.setProperty('--cols',COLS);
-    gridEl.style.setProperty('--rows',ROWS);
-    gridWrap.style.aspectRatio=COLS+'/'+ROWS;
+    gridEl.style.setProperty('--rows',ROWS+1);
+    gridWrap.style.aspectRatio=COLS+'/'+(ROWS+1);
     buildCells();
 
     grid=newGrid();
@@ -1786,6 +1848,14 @@
   retryBtn.addEventListener('click', ()=>{ ensureAudio(); playUIClick(); startGame(); });
   resumeBtn.addEventListener('click', ()=>{ ensureAudio(); playUIClick(); resumeGame(); });
   pauseBtn.addEventListener('click', ()=>{ ensureAudio(); playUIClick(); pauseGame(); });
+  surgeBtn.addEventListener('click', ()=>{
+    if(!gameActive||isResolving||paused) return;
+    const now=Date.now();
+    if(now-lastSurgeAt<SURGE_COOLDOWN) return;
+    lastSurgeAt=now;
+    ensureAudio(); playUIClick();
+    doSpawn();
+  });
   mainMenuBtn.addEventListener('click', ()=>{ ensureAudio(); playUIClick(); goToMainMenu(); });
   changeModeBtn.addEventListener('click', ()=>{
     ensureAudio(); playUIClick();
