@@ -1190,7 +1190,8 @@
   function computeBombChain(r,c){
     const visitedCenters=new Set([r+'_'+c]);
     const visitedCells=new Set();
-    const group=[], edges=[], depths={}, centers=[];
+    const visitedPrismTriggers=new Set();
+    const group=[], edges=[], depths={}, centers=[], triggeredChains=[];
     const queue=[[r,c,0,null]];
     while(queue.length){
       const [cr,cc,cd]=queue.shift();
@@ -1205,20 +1206,62 @@
           const key=nr+'_'+nc;
           const isCenterCell=(dr===0&&dc===0);
           const localDepth=isCenterCell?cd:cd+1;
+          const cellHere=grid[nr][nc];
+
           if(!visitedCells.has(key)){
             visitedCells.add(key);
             group.push([nr,nc]);
             depths[key]=localDepth;
             if(!isCenterCell) edges.push({from:[cr,cc], to:[nr,nc], depth:cd});
           }
-          if(grid[nr][nc].type==='bomb' && !visitedCenters.has(key)){
+
+          if(cellHere.type==='bomb' && !visitedCenters.has(key)){
             visitedCenters.add(key);
             queue.push([nr,nc,localDepth,[cr,cc]]);
+          }
+
+          if(cellHere.type==='prism' && !visitedPrismTriggers.has(key)){
+            visitedPrismTriggers.add(key);
+            const best=bestPrismChain(nr,nc);
+            if(best){
+              best.group.forEach(([gr,gc])=>{
+                const cellAtG=grid[gr][gc];
+                if(cellAtG && cellAtG.type==='prism') visitedPrismTriggers.add(gr+'_'+gc);
+              });
+              const chainBaseDepth=localDepth+1;
+              best.group.forEach(([gr,gc])=>{
+                const gkey=gr+'_'+gc;
+                const shiftedDepth=chainBaseDepth+(best.depths[gkey]||0);
+                if(!visitedCells.has(gkey)){
+                  visitedCells.add(gkey);
+                  group.push([gr,gc]);
+                  depths[gkey]=shiftedDepth;
+                } else if(shiftedDepth<depths[gkey]){
+                  depths[gkey]=shiftedDepth;
+                }
+                // A chain never literally contains a bomb cell (bombs
+                // aren't colour-matchable), so cascading into a bomb the
+                // chain "reaches" means checking cells adjacent to it.
+                neighbors(gr,gc).forEach(([abr,abc])=>{
+                  const adjKey=abr+'_'+abc;
+                  const adjCell=grid[abr][abc];
+                  if(adjCell && adjCell.type==='bomb' && !visitedCenters.has(adjKey)){
+                    visitedCenters.add(adjKey);
+                    edges.push({from:[gr,gc], to:[abr,abc], depth:shiftedDepth});
+                    queue.push([abr,abc,shiftedDepth+1,[gr,gc]]);
+                  }
+                });
+              });
+              best.edges.forEach(edge=>{
+                edges.push({from:edge.from, to:edge.to, depth:chainBaseDepth+edge.depth});
+              });
+              triggeredChains.push({color:best.color, cells:best.group, triggerR:nr, triggerC:nc});
+            }
           }
         }
       }
     }
-    return {group,edges,depths,centers};
+    return {group,edges,depths,centers,triggeredChains};
   }
 
   function simpleBlastArea(r,c,radius){
@@ -1233,15 +1276,80 @@
     return group;
   }
 
-  function bestNeighborColor(r,c){
-    const counts={};
-    neighbors(r,c).forEach(([nr,nc])=>{
-      const n=grid[nr][nc];
-      if(n && n.type==='normal') counts[n.color]=(counts[n.color]||0)+1;
+  /* Finds the best chain a prism (or a connected cluster of prisms) can
+     trigger: every colour touching the cluster is tried as a candidate,
+     the longest resulting chain wins. Ties go to the colour with more
+     cells directly touching the cluster, then to whichever colour was
+     encountered first scanning up/down/left/right outward from the
+     start, through any connected prisms. */
+  function enumeratePrismCandidates(startR,startC){
+    // Find the full connected-prism cluster first, then always scan from a
+    // fixed anchor (topmost, then leftmost, cell in the cluster) so the
+    // result is identical no matter which prism in the cluster triggered
+    // the search — otherwise a bomb could pick a different tie-break
+    // winner depending on which side of the same cluster it happened to hit.
+    const clusterVisited=new Set([startR+'_'+startC]);
+    const clusterQueue=[[startR,startC]];
+    const clusterCells=[[startR,startC]];
+    while(clusterQueue.length){
+      const [pr,pc]=clusterQueue.shift();
+      neighbors(pr,pc).forEach(([nr,nc])=>{
+        const n=grid[nr][nc];
+        if(n && n.type==='prism'){
+          const key=nr+'_'+nc;
+          if(!clusterVisited.has(key)){
+            clusterVisited.add(key);
+            clusterQueue.push([nr,nc]);
+            clusterCells.push([nr,nc]);
+          }
+        }
+      });
+    }
+    clusterCells.sort((a,b)=> a[0]-b[0] || a[1]-b[1]);
+    const [anchorR,anchorC]=clusterCells[0];
+
+    const visitedPrisms=new Set([anchorR+'_'+anchorC]);
+    const queue=[[anchorR,anchorC]];
+    const touchCount={};
+    const firstSeenOrder={};
+    let scanIndex=0;
+    while(queue.length){
+      const [pr,pc]=queue.shift();
+      neighbors(pr,pc).forEach(([nr,nc])=>{
+        const n=grid[nr][nc];
+        scanIndex++;
+        if(!n) return;
+        if(n.type==='normal'){
+          touchCount[n.color]=(touchCount[n.color]||0)+1;
+          if(!(n.color in firstSeenOrder)) firstSeenOrder[n.color]=scanIndex;
+        } else if(n.type==='prism'){
+          const key=nr+'_'+nc;
+          if(!visitedPrisms.has(key)){
+            visitedPrisms.add(key);
+            queue.push([nr,nc]);
+          }
+        }
+      });
+    }
+    return {touchCount,firstSeenOrder};
+  }
+
+  function bestPrismChain(startR,startC){
+    const {touchCount,firstSeenOrder}=enumeratePrismCandidates(startR,startC);
+    const colors=Object.keys(touchCount);
+    if(!colors.length) return null;
+    let best=null;
+    colors.forEach(color=>{
+      const result=floodFill(startR,startC,color);
+      const len=result.group.length;
+      const better = !best || len>best.len ||
+        (len===best.len && touchCount[color]>touchCount[best.color]) ||
+        (len===best.len && touchCount[color]===touchCount[best.color] && firstSeenOrder[color]<firstSeenOrder[best.color]);
+      if(better){
+        best={color, len, group:result.group, edges:result.edges, depths:result.depths};
+      }
     });
-    let bestColor=null, bestN=0;
-    for(const k in counts){ if(counts[k]>bestN){ bestColor=k; bestN=counts[k]; } }
-    return bestColor;
+    return best;
   }
 
   function spawnBonusOrb(type,radius){
@@ -1347,21 +1455,23 @@
     }
 
     if(cellVal.type==='prism'){
-      let targetColor=null;
       if(m.prismAdvanced && dist>=DRAG_SHOW_THRESHOLD){
         const dir=primaryDirection(dx,dy);
         const nr=r+dir.dr, nc=c+dir.dc;
+        let targetColor=null;
         if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS){
           const nb=grid[nr][nc];
           if(nb && nb.type==='normal') targetColor=nb.color;
         }
-      } else {
-        targetColor=bestNeighborColor(r,c);
+        if(!targetColor){ clearPreviewGroup(); return; }
+        const {group}=floodFill(r,c,targetColor);
+        if(group.length<2){ clearPreviewGroup(); return; }
+        setPreviewGroup(group,'preview');
+        return;
       }
-      if(!targetColor){ clearPreviewGroup(); return; }
-      const {group}=floodFill(r,c,targetColor);
-      if(group.length<2){ clearPreviewGroup(); return; }
-      setPreviewGroup(group,'preview');
+      const best=bestPrismChain(r,c);
+      if(!best){ clearPreviewGroup(); return; }
+      setPreviewGroup(best.group,'preview');
       return;
     }
 
@@ -1429,8 +1539,8 @@
           const p=freeFollow(); endX=p.x; endY=p.y;
         }
       } else {
-        const bestColor=bestNeighborColor(r,c);
-        strokeColor=bestColor?`var(--accent-${bestColor})`:'rgba(237,239,245,.5)';
+        const best=bestPrismChain(r,c);
+        strokeColor=best?`var(--accent-${best.color})`:'rgba(237,239,245,.5)';
         const p=freeFollow(); endX=p.x; endY=p.y;
       }
     } else {
@@ -1521,11 +1631,9 @@
 
   /* ================= Prism ================= */
   function resolvePrismTap(r,c){
-    const bestColor=bestNeighborColor(r,c);
-    if(!bestColor){ shakeCell(r,c); return; }
-    const {group,edges,depths}=floodFill(r,c,bestColor);
-    if(group.length<2){ shakeCell(r,c); return; }
-    resolveGroup(group,edges,depths,'chain',r,c);
+    const best=bestPrismChain(r,c);
+    if(!best){ shakeCell(r,c); return; }
+    resolveGroup(best.group,best.edges,best.depths,'chain',r,c);
   }
 
   function resolvePrismDrag(r,c,dir){
@@ -1546,9 +1654,9 @@
   }
 
   function resolveBombDrag(r,c){
-    const {group,edges,depths,centers}=computeBombChain(r,c);
+    const {group,edges,depths,centers,triggeredChains}=computeBombChain(r,c);
     const originRadius=(grid[r][c] && grid[r][c].radius) || 1;
-    resolveGroup(group,edges,depths,'bomb',r,c,{fizzle:false, centers, radius:originRadius});
+    resolveGroup(group,edges,depths,'bomb',r,c,{fizzle:false, centers, radius:originRadius, triggeredChains});
   }
 
   function resolveBombSimple(r,c){
@@ -1572,17 +1680,38 @@
     currentComboWindow=comboWindowFor(combo);
 
     const multiplier=Math.min(1+(combo-1)*0.4,3.5);
-    const base = kind==='bomb' ? group.length*15 : group.length*group.length*8;
-    let points=Math.round(base*multiplier);
 
-    let tier=null;
-    if(kind==='chain'){
-      if(group.length>=8) tier='megabomb';
-      else if(group.length>=7) tier='bigbomb';
-      else if(group.length>=6) tier='bomb';
-      else if(group.length>=5) tier='prism';
+    const tierColors={prism:'var(--accent-violet)', bomb:'var(--bomb-spark)', bigbomb:'var(--accent-coral)', megabomb:'var(--accent-lime)'};
+    const tierFor=(len)=>{
+      if(len>=8) return 'megabomb';
+      if(len>=7) return 'bigbomb';
+      if(len>=6) return 'bomb';
+      if(len>=5) return 'prism';
+      return null;
+    };
+
+    let base;
+    const tierEvents=[]; // [{tier, atR, atC}]
+    if(kind==='bomb'){
+      const triggeredChains=(extra && extra.triggeredChains) || [];
+      const triggeredCellKeys=new Set();
+      let chainScore=0;
+      triggeredChains.forEach(tc=>{
+        tc.cells.forEach(([r,c])=>triggeredCellKeys.add(r+'_'+c));
+        chainScore += tc.cells.length*tc.cells.length*8;
+        const t=tierFor(tc.cells.length);
+        if(t) tierEvents.push({tier:t, atR:tc.triggerR, atC:tc.triggerC});
+      });
+      const blastCellCount=group.length-triggeredCellKeys.size;
+      base = blastCellCount*15 + chainScore;
+    } else {
+      base = group.length*group.length*8;
+      const t=tierFor(group.length);
+      if(t) tierEvents.push({tier:t, atR:clickR, atC:clickC});
     }
-    if(tier) points+=TIER_BONUS[tier];
+
+    let points=Math.round(base*multiplier);
+    tierEvents.forEach(ev=> points+=TIER_BONUS[ev.tier]);
 
     score+=points;
     scoreVal.textContent=String(score).padStart(6,'0');
@@ -1658,26 +1787,37 @@
       if(kind!=='bomb') playPopTone(d);
     });
 
-    let tierColor=null, tierLabel=null;
-    if(tier){
-      const tierColors={prism:'var(--accent-violet)', bomb:'var(--bomb-spark)', bigbomb:'var(--accent-coral)', megabomb:'var(--accent-lime)'};
-      tierColor=tierColors[tier];
-      tierLabel=TIER_LABEL[tier];
-      spawnParticles(clickC*cw+cw/2, clickR*ch+ch/2, tierColor, TIER_BURST[tier], 0);
-      playTierSound(tier);
-      if(tier==='prism') spawnBonusOrb('prism');
-      else if(TIER_RADIUS[tier]) spawnBonusOrb('bomb', TIER_RADIUS[tier]);
-    }
+    let mainTierColor=null, mainTierLabel=null;
+    tierEvents.forEach(ev=>{
+      const tColor=tierColors[ev.tier];
+      const tLabel=TIER_LABEL[ev.tier];
+      spawnParticles(ev.atC*cw+cw/2, ev.atR*ch+ch/2, tColor, TIER_BURST[ev.tier], 0);
+      playTierSound(ev.tier);
+      if(ev.tier==='prism') spawnBonusOrb('prism');
+      else if(TIER_RADIUS[ev.tier]) spawnBonusOrb('bomb', TIER_RADIUS[ev.tier]);
+
+      if(kind==='chain'){
+        mainTierColor=tColor; mainTierLabel=tLabel;
+      } else {
+        const tierFloater=document.createElement('div');
+        tierFloater.className='floater';
+        tierFloater.style.left=(ev.atC*cw+cw/2)+'px';
+        tierFloater.style.top=(ev.atR*ch+ch/2)+'px';
+        tierFloater.innerHTML=`<span class="ftier" style="color:${tColor}">${tLabel}</span>`;
+        floatersLayer.appendChild(tierFloater);
+        setTimeout(()=>tierFloater.remove(),1200);
+      }
+    });
 
     const floater=document.createElement('div');
     floater.className='floater';
     floater.style.left=(clickC*cw+cw/2)+'px';
     floater.style.top=(clickR*ch+ch/2)+'px';
     floater.innerHTML=`<span class="fpts">+${points}</span>`
-      +(tierLabel?`<span class="ftier" style="color:${tierColor}">${tierLabel}</span>`:'')
+      +(mainTierLabel?`<span class="ftier" style="color:${mainTierColor}">${mainTierLabel}</span>`:'')
       +(combo>1?`<span class="fcombo">CHAIN ×${combo}</span>`:'');
     floatersLayer.appendChild(floater);
-    setTimeout(()=>floater.remove(), tier?1200:950);
+    setTimeout(()=>floater.remove(), mainTierLabel?1200:950);
 
     if(kind==='bomb'){
       const bombRadius=(extra && extra.radius) || 1;
