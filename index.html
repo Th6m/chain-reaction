@@ -266,16 +266,6 @@
     z-index:3;
   }
 
-  .cell.armed{
-    animation:armedPulse .5s ease-in-out infinite;
-    box-shadow:0 0 0 3px var(--danger), 0 0 22px 6px rgba(255,59,78,.65) !important;
-    z-index:4;
-  }
-  @keyframes armedPulse{
-    0%,100%{ transform:scale(1.08); }
-    50%{ transform:scale(1.2); }
-  }
-
   .cell[class*="c-"]{
     background:radial-gradient(circle at 32% 26%, color-mix(in srgb, var(--orb) 50%, white 50%), var(--orb) 66%);
     box-shadow:0 0 10px -1px color-mix(in srgb, var(--orb) 70%, transparent 30%), inset 0 -4px 7px rgba(0,0,0,.28);
@@ -718,7 +708,7 @@
   </main>
 
   <div class="legend">
-    <span class="legend-item"><i class="chip bomb-chip"></i>Blast — tap to pop it alone, drag to chain-detonate nearby</span>
+    <span class="legend-item"><i class="chip bomb-chip"></i>Blast — tap to detonate, chains into anything caught in the blast</span>
     <span class="legend-item"><i class="chip prism-chip"></i>Prism — tap to auto-bond, drag toward a colour to choose it</span>
   </div>
 
@@ -727,7 +717,7 @@
       <h1>CHAIN REACTION</h1>
       <p class="tagline">Pop the pattern. Chase the cascade.</p>
       <button class="orb-button" id="startBtn" aria-label="Start game"></button>
-      <p class="hint">Click groups of 2+ matching orbs to trigger a chain — longer chains score far more.<br>Chains of 5+ trigger bonus rewards: 6 gifts a free prism, 7+ gifts a free bomb.<br>Drag blast and prism orbs to aim them.<br>The dashed line marks the danger zone — it's only over when a column overflows above it. Tap ⚡ to skip the wait for the next surge.</p>
+      <p class="hint">Click groups of 2+ matching orbs to trigger a chain — longer chains score far more.<br>Chains of 5+ trigger bonus rewards: 6 gifts a free prism, 7+ gifts a free bomb.<br>Drag prism orbs to aim them.<br>The dashed line marks the danger zone — it's only over when a column overflows above it. Tap ⚡ to skip the wait for the next surge.</p>
     </div>
   </div>
 
@@ -812,7 +802,6 @@
   let soundOn=true, audioCtx=null;
   let pointerStart=null;
   let lastPointerHandled=null;
-  let bombArmedKey=null;
   let lastSurgeAt=0;
   const SURGE_COOLDOWN=400;
   let previewKeys=new Set();
@@ -876,10 +865,6 @@
     tone({freq,dur:0.16,type:'triangle',gain:0.13,delay:depth*STEP_MS/1000,attack:0.004});
   }
 
-  function playBombFizzle(){
-    tone({freq:520,freqEnd:180,dur:0.14,type:'triangle',gain:0.14,delay:0});
-  }
-
   function playBombBoom(delay, radius){
     const scale=1+((radius||1)-1)*0.35;
     noiseBurst({dur:0.3*scale, gain:Math.min(0.26*scale,0.42), delay, filterFreq:1100/scale});
@@ -907,10 +892,6 @@
 
   function playUIClick(){
     tone({freq:520,dur:0.06,type:'square',gain:0.07,delay:0});
-  }
-
-  function playDragTick(){
-    tone({freq:700,dur:0.03,type:'sine',gain:0.03,delay:0});
   }
 
   function playTierSound(tier){
@@ -1053,9 +1034,20 @@
     warningLine.style.top=ch+'px';
   }
 
+  /* getBoundingClientRect() forces a synchronous layout flush, far too expensive
+     to run on every pointermove. The grid's geometry only changes on window
+     resize or growGrid(), so cache it and invalidate explicitly. We also
+     invalidate on pointerdown, which makes the read happen exactly once per
+     gesture and keeps the cache honest if some other layout shift slipped past.
+     Do not "simplify" this back into an unconditional rect read. */
+  let metricsCache=null;
+  function invalidateCellMetrics(){ metricsCache=null; }
   function cellMetrics(){
+    if(metricsCache) return metricsCache;
     const rect=gridEl.getBoundingClientRect();
-    return {cw:rect.width/COLS, ch:rect.height/(ROWS+1), rect};
+    const m={cw:rect.width/COLS, ch:rect.height/(ROWS+1), rect};
+    if(rect.width) metricsCache=m; // never cache a pre-layout zero-size rect
+    return m;
   }
 
   function neighbors(r,c){
@@ -1276,7 +1268,7 @@
   function handleTap(r,c){
     const cell=grid[r] && grid[r][c];
     if(!cell) return;
-    if(cell.type==='bomb'){ resolveBombTap(r,c); return; }
+    if(cell.type==='bomb'){ resolveBomb(r,c); return; }
     if(cell.type==='prism'){ resolvePrismTap(r,c); return; }
     const {group,edges,depths}=floodFill(r,c,cell.color);
     if(group.length<2) shakeCell(r,c);
@@ -1286,7 +1278,7 @@
   function handleDrag(r,c,dx,dy){
     const cell=grid[r] && grid[r][c];
     if(!cell) return;
-    if(cell.type==='bomb'){ resolveBombDrag(r,c); return; }
+    if(cell.type==='bomb'){ resolveBomb(r,c); return; }
     if(cell.type==='prism'){ resolvePrismDrag(r,c, primaryDirection(dx,dy)); return; }
     const {group,edges,depths}=floodFill(r,c,cell.color);
     if(group.length<2) shakeCell(r,c);
@@ -1321,24 +1313,49 @@
     previewClassUsed=null;
   }
 
+  /* Per-gesture memo for the costly preview computations.
+     pointermove fires far more often than the *result* of those computations can
+     actually change: a bomb's blast is always centred on its own cell (exactly
+     one possible group for the whole press) and a prism only ever aims at one of
+     four neighbours via primaryDirection(). Re-running computeBombChain() /
+     floodFill() per pixel is pure waste, so we recompute only when the inputs
+     that matter change. Do not collapse this back into an unconditional
+     recompute -- on a grown board with a high-polling-rate pointer it stutters. */
+  let gesturePreview={ bombGroup:null, phase:-1, dirKey:null };
+  function resetGesturePreview(){
+    gesturePreview={ bombGroup:null, phase:-1, dirKey:null };
+  }
+
   function updatePreview(r,c,dx,dy){
     const cellVal=grid[r] && grid[r][c];
     if(!cellVal){ clearPreviewGroup(); return; }
     const dist=Math.hypot(dx,dy);
 
     if(cellVal.type==='bomb'){
-      if(dist>=DRAG_THRESHOLD){
-        const {group}=computeBombChain(r,c);
-        setPreviewGroup(group,'preview-blast');
-      } else {
-        setPreviewGroup([[r,c]],'preview-blast');
+      // The blast is centred on the bomb regardless of drag distance/direction,
+      // so the group is computed once (on pointerdown) and shown statically for
+      // the rest of the press. No recompute on move.
+      if(!gesturePreview.bombGroup){
+        gesturePreview.bombGroup=computeBombChain(r,c).group;
+        setPreviewGroup(gesturePreview.bombGroup,'preview-blast');
       }
       return;
     }
 
     if(cellVal.type==='prism'){
-      if(dist>=DRAG_SHOW_THRESHOLD){
-        const dir=primaryDirection(dx,dy);
+      // The only inputs to the group below are (a) which threshold band the drag
+      // is in -- no preview / free-follow / snapped -- and (b) which of the four
+      // neighbours we aim at. Both change a handful of times per gesture at most,
+      // so skip the floodFill/bestPrismChain rebuild when neither moved. The drag
+      // line/puck still updates every frame, so visual tracking stays smooth.
+      const phase = dist>=DRAG_THRESHOLD ? 2 : dist>=DRAG_SHOW_THRESHOLD ? 1 : 0;
+      const dir = phase>0 ? primaryDirection(dx,dy) : null;
+      const dirKey = dir ? dir.dr+','+dir.dc : 'none';
+      if(phase===gesturePreview.phase && dirKey===gesturePreview.dirKey) return;
+      gesturePreview.phase=phase;
+      gesturePreview.dirKey=dirKey;
+
+      if(dir){
         const nr=r+dir.dr, nc=c+dir.dc;
         let targetColor=null;
         if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS){
@@ -1363,25 +1380,6 @@
   }
 
   /* ---------- live drag line/puck ---------- */
-  function setBombArmed(r,c,on){
-    const key=r+'_'+c;
-    if(on){
-      if(bombArmedKey===key) return;
-      clearBombArmed();
-      const btn=cellButtons[r] && cellButtons[r][c];
-      if(btn){ btn.classList.add('armed'); bombArmedKey=key; playDragTick(); }
-    } else if(bombArmedKey===key){
-      clearBombArmed();
-    }
-  }
-  function clearBombArmed(){
-    if(!bombArmedKey) return;
-    const [rr,cc]=bombArmedKey.split('_').map(Number);
-    const btn=cellButtons[rr] && cellButtons[rr][cc];
-    if(btn) btn.classList.remove('armed');
-    bombArmedKey=null;
-  }
-
   function showDragVisual(r,c,dx,dy,cellVal){
     const {cw,ch,rect}=cellMetrics();
     dragSvg.setAttribute('width', rect.width);
@@ -1398,11 +1396,7 @@
       return {x:originX+Math.cos(angle)*clamped, y:originY+Math.sin(angle)*clamped};
     };
 
-    if(cellVal.type==='bomb'){
-      strokeColor='var(--bomb-spark)';
-      const p=freeFollow(); endX=p.x; endY=p.y;
-      setBombArmed(r,c, dist>=DRAG_THRESHOLD);
-    } else if(cellVal.type==='prism'){
+    if(cellVal.type==='prism'){
       const dir=primaryDirection(dx,dy);
       const nr=r+dir.dr, nc=c+dir.dc;
       let targetColor=null;
@@ -1441,7 +1435,6 @@
   function hideDragVisual(){
     dragLine.classList.remove('show');
     dragPuck.classList.remove('show');
-    clearBombArmed();
   }
 
   function cancelPointerGesture(){
@@ -1450,6 +1443,7 @@
       if(btn) btn.classList.remove('grabbed');
     }
     pointerStart=null;
+    cancelPendingMove();
     hideDragVisual();
     clearPreviewGroup();
   }
@@ -1460,25 +1454,52 @@
     if(!cellEl || cellEl.classList.contains('empty')) return;
     const r=+cellEl.dataset.r, c=+cellEl.dataset.c;
     pointerStart={ r, c, x:e.clientX, y:e.clientY };
+    // One layout read and one fresh preview memo for the whole gesture.
+    invalidateCellMetrics();
+    cellMetrics();
+    resetGesturePreview();
     cellEl.classList.add('grabbed');
     updatePreview(r,c,0,0);
   });
 
-  window.addEventListener('pointermove', e=>{
-    if(!pointerStart) return;
+  /* Raw pointermove fires at the device polling rate (commonly 500-1000 Hz),
+     far faster than anything can usefully be redrawn. Coalesce into a single
+     update per animation frame so a quick flick costs ~60 updates/sec instead
+     of ~1000, keeping high-polling-rate pointers from stuttering the board. */
+  let pendingMove=null, moveRaf=0;
+
+  function processPendingMove(){
+    moveRaf=0;
+    const ev=pendingMove; pendingMove=null;
+    if(!ev || !pointerStart) return;
     const {r,c,x,y}=pointerStart;
     const cellVal=grid[r] && grid[r][c];
     if(!cellVal){ hideDragVisual(); clearPreviewGroup(); return; }
-    const dx=e.clientX-x, dy=e.clientY-y;
+    const dx=ev.x-x, dy=ev.y-y;
     updatePreview(r,c,dx,dy);
+    // Bombs detonate on their own cell however you press them, so there is
+    // nothing to aim: no drag line, just the static blast preview.
+    if(cellVal.type==='bomb'){ hideDragVisual(); return; }
     if(Math.hypot(dx,dy)<DRAG_SHOW_THRESHOLD){ hideDragVisual(); return; }
     showDragVisual(r,c,dx,dy,cellVal);
+  }
+
+  function cancelPendingMove(){
+    pendingMove=null;
+    if(moveRaf){ cancelAnimationFrame(moveRaf); moveRaf=0; }
+  }
+
+  window.addEventListener('pointermove', e=>{
+    if(!pointerStart) return;
+    pendingMove={ x:e.clientX, y:e.clientY };
+    if(!moveRaf) moveRaf=requestAnimationFrame(processPendingMove);
   });
 
   window.addEventListener('pointerup', e=>{
     if(!pointerStart) return;
     const {r,c,x,y}=pointerStart;
     pointerStart=null;
+    cancelPendingMove();
     const grabbedBtn=cellButtons[r] && cellButtons[r][c];
     if(grabbedBtn) grabbedBtn.classList.remove('grabbed');
     hideDragVisual();
@@ -1492,6 +1513,10 @@
   });
 
   window.addEventListener('pointercancel', cancelPointerGesture);
+
+  // Cached grid geometry only goes stale when the viewport or the grid changes.
+  window.addEventListener('resize', invalidateCellMetrics);
+  window.addEventListener('orientationchange', invalidateCellMetrics);
 
   gridEl.addEventListener('click', e=>{
     const cellEl=e.target.closest('.cell');
@@ -1521,16 +1546,12 @@
   }
 
   /* ================= Bomb ================= */
-  function resolveBombTap(r,c){
-    const group=[[r,c]];
-    const depths={[r+'_'+c]:0};
-    resolveGroup(group,[],depths,'bomb',r,c,{fizzle:true, centers:[0]});
-  }
-
-  function resolveBombDrag(r,c){
+  // Any press on a bomb -- tap, click or drag -- triggers the full blast. There
+  // is no tap-vs-drag distinction and no weaker "fizzle" outcome any more.
+  function resolveBomb(r,c){
     const {group,edges,depths,centers,triggeredChains}=computeBombChain(r,c);
     const originRadius=(grid[r][c] && grid[r][c].radius) || 1;
-    resolveGroup(group,edges,depths,'bomb',r,c,{fizzle:false, centers, radius:originRadius, triggeredChains});
+    resolveGroup(group,edges,depths,'bomb',r,c,{centers, radius:originRadius, triggeredChains});
   }
 
   /* ================= Resolution ================= */
@@ -1632,12 +1653,9 @@
     };
 
     if(kind==='bomb'){
-      if(extra && extra.fizzle) playBombFizzle();
-      else{
-        const centers=(extra && extra.centers) ? extra.centers : [0];
-        const bombRadius=(extra && extra.radius) || 1;
-        centers.forEach(d=> playBombBoom(d*STEP_MS/1000, bombRadius));
-      }
+      const centers=(extra && extra.centers) ? extra.centers : [0];
+      const bombRadius=(extra && extra.radius) || 1;
+      centers.forEach(d=> playBombBoom(d*STEP_MS/1000, bombRadius));
     }
 
     group.forEach(([r,c])=>{
@@ -1762,6 +1780,7 @@
     gridEl.style.setProperty('--cols',COLS);
     gridEl.style.setProperty('--rows',ROWS+1);
     gridWrap.style.aspectRatio=COLS+'/'+(ROWS+1);
+    invalidateCellMetrics(); // grid changed size: cached rect/cw/ch are stale
     buildCells();
     renderGrid();
     flashExpand();
@@ -1897,6 +1916,7 @@
     gridEl.style.setProperty('--cols',COLS);
     gridEl.style.setProperty('--rows',ROWS+1);
     gridWrap.style.aspectRatio=COLS+'/'+(ROWS+1);
+    invalidateCellMetrics(); // grid changed size: cached rect/cw/ch are stale
     buildCells();
 
     grid=newGrid();
