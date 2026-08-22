@@ -1158,9 +1158,14 @@
     const group=[];
     const edges=[];
     const depths={};
+    // Index-pointer dequeue: Array.shift() is O(n) (it re-indexes the whole
+    // remaining array), so shifting a BFS queue makes the search O(n^2).
+    // Walking a `head` index is O(1) per dequeue and visits cells in
+    // exactly the same order.
     const queue=[[startR,startC,0,null]];
-    while(queue.length){
-      const [r,c,d,parent]=queue.shift();
+    let head=0;
+    while(head<queue.length){
+      const [r,c,d,parent]=queue[head++];
       group.push([r,c]);
       depths[key(r,c)]=d;
       if(parent) edges.push({from:parent, to:[r,c], depth:d-1});
@@ -1181,9 +1186,12 @@
     const visitedCells=new Set();
     const visitedPrismTriggers=new Set();
     const group=[], edges=[], depths={}, centers=[], triggeredChains=[];
+    // Index-pointer dequeue (see floodFill): shift() is O(n) per call, which
+    // would make a long bomb/prism cascade O(n^2). Order is unchanged.
     const queue=[[r,c,0,null]];
-    while(queue.length){
-      const [cr,cc,cd]=queue.shift();
+    let head=0;
+    while(head<queue.length){
+      const [cr,cc,cd]=queue[head++];
       centers.push(cd);
       const centerCell=grid[cr][cc];
       const rad=(centerCell && centerCell.radius) || 1;
@@ -1268,8 +1276,11 @@
     const clusterVisited=new Set([startR+'_'+startC]);
     const clusterQueue=[[startR,startC]];
     const clusterCells=[[startR,startC]];
-    while(clusterQueue.length){
-      const [pr,pc]=clusterQueue.shift();
+    // Index-pointer dequeue (see floodFill): shift() is O(n) per call, so a
+    // large connected prism cluster would cost O(n^2) to walk.
+    let clusterHead=0;
+    while(clusterHead<clusterQueue.length){
+      const [pr,pc]=clusterQueue[clusterHead++];
       neighbors(pr,pc).forEach(([nr,nc])=>{
         const n=grid[nr][nc];
         if(n && n.type==='prism'){
@@ -1290,8 +1301,11 @@
     const touchCount={};
     const firstSeenOrder={};
     let scanIndex=0;
-    while(queue.length){
-      const [pr,pc]=queue.shift();
+    // Index-pointer dequeue (see floodFill): avoids the O(n) shift() per cell
+    // that turns this scan into O(n^2) on big clusters.
+    let head=0;
+    while(head<queue.length){
+      const [pr,pc]=queue[head++];
       neighbors(pr,pc).forEach(([nr,nc])=>{
         const n=grid[nr][nc];
         scanIndex++;
@@ -1696,12 +1710,17 @@
     comboLabel.textContent = combo>1 ? `CHAIN ×${combo}` : '';
     comboFill.style.transition='none';
     comboFill.style.width='100%';
+    dbgSecStart('resolveGroup:forcedReflow');   /* DBG (temporary overlay) */
     void comboFill.offsetWidth;
+    dbgSecEnd('resolveGroup:forcedReflow');     /* DBG */
     comboFill.style.transition=`width ${currentComboWindow}ms linear`;
     comboFill.style.width='0%';
     if(combo>1) playComboChime(combo);
 
+    /* DBG: usually a cache hit; the miss is a real synchronous layout flush. */
+    dbgSecStart('resolveGroup:forcedReflow');   /* DBG */
     const {cw,ch,rect}=cellMetrics();
+    dbgSecEnd('resolveGroup:forcedReflow');     /* DBG */
     sparkSvg.setAttribute('width', rect.width);
     sparkSvg.setAttribute('height', rect.height);
     sparkSvg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
@@ -1755,6 +1774,10 @@
       centers.forEach(d=> playBombBoom(d*STEP_MS/1000, bombRadius));
     }
 
+    /* DBG: the per-cell DOM update loop. This window CONTAINS the nested
+       resolveGroup:particles measures (spendParticles runs inside it), so read
+       the two against each other in the log rather than adding them up. */
+    dbgSecStart('resolveGroup:domWrites');      /* DBG */
     group.forEach(([r,c])=>{
       const d=depths[r+'_'+c]||0;
       maxDepth=Math.max(maxDepth,d);
@@ -1764,6 +1787,7 @@
       spendParticles(c*cw+cw/2, r*ch+ch/2, colorFor(r,c), particleBudget, d*STEP_MS);
       if(kind!=='bomb') playPopTone(d);
     });
+    dbgSecEnd('resolveGroup:domWrites');        /* DBG */
 
     let mainTierColor=null, mainTierLabel=null;
     const MAX_TIER_FLOATERS=6;
@@ -1805,11 +1829,15 @@
     if(kind==='bomb'){
       const bombRadius=(extra && extra.radius) || 1;
       stage.classList.remove('shake','shake-big');
+      dbgSecStart('resolveGroup:forcedReflow'); /* DBG */
       void stage.offsetWidth;
+      dbgSecEnd('resolveGroup:forcedReflow');   /* DBG */
       stage.classList.add(bombRadius>=2?'shake-big':'shake');
     } else if(group.length>=6){
       stage.classList.remove('shake');
+      dbgSecStart('resolveGroup:forcedReflow'); /* DBG */
       void stage.offsetWidth;
+      dbgSecEnd('resolveGroup:forcedReflow');   /* DBG */
       stage.classList.add('shake');
     }
 
@@ -1818,6 +1846,9 @@
   }
 
   function spawnParticles(x,y,color,count,delay){
+    /* DBG: named for resolveGroup because every caller (directly, or via
+       spawnBonusOrb) sits inside a cascade resolve. */
+    dbgSecStart('resolveGroup:particles');      /* DBG */
     for(let i=0;i<count;i++){
       const p=document.createElement('div');
       p.className='particle';
@@ -1832,12 +1863,14 @@
       particlesLayer.appendChild(p);
       setTimeout(()=>p.remove(), delay+650);
     }
+    dbgSecEnd('resolveGroup:particles');        /* DBG */
   }
 
   function finalizeClear(group){
     sparkSvg.innerHTML='';
     const affectedCols=new Set();
     group.forEach(([r,c])=>{ grid[r][c]=null; affectedCols.add(c); });
+    dbgSecStart('finalizeClear:rerender');      /* DBG */
     affectedCols.forEach(c=>{
       const stack=[];
       for(let r=ROWS;r>=0;r--){ if(grid[r][c]) stack.push(grid[r][c]); }
@@ -1852,6 +1885,7 @@
     affectedCols.forEach(c=>{
       for(let r=0;r<ROWS+1;r++) renderSingleCell(r,c,false);
     });
+    dbgSecEnd('finalizeClear:rerender');        /* DBG */
     updateBombPulseQuality(); // mobile-only adaptive quality (bombs may have popped/spawned)
     positionWarningLine();
     isResolving=false;
@@ -2084,6 +2118,325 @@
     if(soundOn) playUIClick();
     savePrefs();
   });
+
+  /* =====================================================================
+     TEMPORARY DEBUG OVERLAY — safe to delete
+     ---------------------------------------------------------------------
+     Everything from this banner down to the matching "END TEMPORARY DEBUG
+     OVERLAY" banner is throwaway diagnostic scaffolding for chasing frame
+     drops on phones. It is purely additive: it reads game state but never
+     writes it, and nothing above this point refers to anything below it,
+     so deleting the whole block restores the file exactly.
+
+     Activation: tap the ".brand" title 5x within 3s (the game runs as an
+     installed PWA, so there is no URL bar to pass a query param through).
+     The full-screen overlays sit above the header, so the taps have to
+     happen while a game is actually in progress.
+
+     Cost while switched off: one click listener, plus a mark/measure pair
+     around seven game functions and around a handful of sections inside
+     resolveGroup / finalizeClear / spawnParticles (see dbgSecStart). Section
+     marks are placed around loops, never inside them, so the count per
+     cascade stays in the dozens. No panel, no rAF loop, no rendering.
+     ===================================================================== */
+
+  const DBG_TAPS_NEEDED=5, DBG_TAP_WINDOW=3000;
+  const DBG_LONGTASK_MS=50, DBG_LOG_MAX=10;
+  const DBG_MEASURE_WINDOW=8000;   // how long a measure stays available for attribution
+  const DBG_PAINT_MS=250;          // panel refresh rate (the panel must not itself cause jank)
+
+  const dbg={
+    on:false, panel:null, raf:0, lastPaint:0,
+    frames:[],       // rAF timestamps inside the current 1s window
+    tasks:[],        // last DBG_LOG_MAX long tasks
+    measures:[],     // recent game:* measures, for long-task attribution
+    taps:[], longtaskSupported:false
+  };
+
+  /* Wraps a game function in a performance mark/measure pair so a long task
+     can be blamed on whatever was running inside it. try/finally matters: if
+     a wrapped call ever throws, an unclosed start mark would poison the next
+     measurement with a bogus multi-second duration. */
+  function dbgInstrument(name, fn){
+    const label='game:'+name, mStart=label+':s', mEnd=label+':e';
+    return function(){
+      performance.mark(mStart);
+      try{
+        return fn.apply(this, arguments);
+      } finally {
+        performance.mark(mEnd);
+        try{ performance.measure(label, mStart, mEnd); }catch(e){ /* start mark lost */ }
+        performance.clearMarks(mStart);
+        performance.clearMarks(mEnd);
+      }
+    };
+  }
+
+  /* Reassigning the hoisted function declarations means every existing call
+     site picks the wrapper up without a single edit inside the game code. */
+  resolveGroup     = dbgInstrument('resolveGroup', resolveGroup);
+  computeBombChain = dbgInstrument('computeBombChain', computeBombChain);
+  bestPrismChain   = dbgInstrument('bestPrismChain', bestPrismChain);
+  floodFill        = dbgInstrument('floodFill', floodFill);   // iterative BFS, so every call is an outer call
+  doSpawn          = dbgInstrument('doSpawn', doSpawn);
+  growGrid         = dbgInstrument('growGrid', growGrid);
+  finalizeClear    = dbgInstrument('finalizeClear', finalizeClear);
+
+  /* Section-level instrumentation, one level finer than dbgInstrument.
+     Whole-function wrappers can only ever say "the stall happened somewhere
+     inside resolveGroup"; these bracket the individual suspect sections, so
+     dbgAttribute can name the actual one.
+
+     These two are function DECLARATIONS on purpose: they hoist to the top of
+     this IIFE, which is what lets the dbgSec* one-liners sitting up inside
+     resolveGroup / finalizeClear / spawnParticles call them even though they
+     are defined down here. That keeps all the real machinery inside this
+     block — removing the overlay means deleting this block and then stripping
+     the marked one-liners above (grep for "dbgSec").
+
+     Sections nest (resolveGroup > :domWrites > :particles). That is
+     deliberate: comparing an outer measure against the inner ones is the
+     whole point, and dbgAttribute knows how to unpick the nesting. */
+  function dbgSecStart(name){
+    if(typeof performance==='undefined' || !performance.mark) return;
+    performance.mark('game:'+name+':s');
+  }
+  function dbgSecEnd(name){
+    if(typeof performance==='undefined' || !performance.mark) return;
+    const label='game:'+name, mStart=label+':s', mEnd=label+':e';
+    performance.mark(mEnd);
+    try{ performance.measure(label, mStart, mEnd); }catch(e){ /* start mark lost */ }
+    performance.clearMarks(mStart);
+    performance.clearMarks(mEnd);
+  }
+
+  /* Observers run unconditionally so the log already has history in it the
+     moment the overlay is switched on. Both callbacks are passive. */
+  (function dbgObserve(){
+    if(typeof PerformanceObserver!=='function') return;
+    const supported=PerformanceObserver.supportedEntryTypes||[];
+    if(supported.indexOf('longtask')>=0){
+      try{
+        new PerformanceObserver(list=>{
+          list.getEntries().forEach(e=>{
+            dbg.tasks.push({start:e.startTime, dur:e.duration, src:'longtask', attr:''});
+          });
+          if(dbg.tasks.length>DBG_LOG_MAX) dbg.tasks.splice(0, dbg.tasks.length-DBG_LOG_MAX);
+        }).observe({entryTypes:['longtask']});
+        dbg.longtaskSupported=true;
+      }catch(e){ /* refused; the rAF loop falls back to frame-gap detection */ }
+    }
+    try{
+      new PerformanceObserver(list=>{
+        list.getEntries().forEach(e=>{
+          if(e.name.indexOf('game:')!==0) return;
+          dbg.measures.push({name:e.name.slice(5), start:e.startTime, end:e.startTime+e.duration});
+          performance.clearMeasures(e.name); // keep the performance timeline from growing all game
+        });
+        const cutoff=performance.now()-DBG_MEASURE_WINDOW;
+        while(dbg.measures.length && dbg.measures[0].end<cutoff) dbg.measures.shift();
+        if(dbg.measures.length>400) dbg.measures.splice(0, dbg.measures.length-400);
+      }).observe({entryTypes:['measure']});
+    }catch(e){ /* no measure observer: long tasks just show up unattributed */ }
+  })();
+
+  /* The actual diagnostic: which instrumented call was running during this
+     task's time window — narrowed to the most specific one that can account
+     for it.
+
+     Listing every overlapping measure is what made the previous pass point at
+     the wrong code: a whole-function measure like resolveGroup spans every
+     section inside it, so an expensive :domWrites loop showed up as
+     "resolveGroup, floodFill, computeBombChain" and floodFill took the blame
+     for time it never spent.
+
+     Ranking rule, in order:
+       1. Keep measures that COVER at least half the task - those can actually
+          explain the stall. A measure that merely clips the edge of it cannot.
+       2. Among those, shortest window first. The tightest window that still
+          covers the task is the smallest piece of code that was really busy;
+          its parents follow it in the list, so outer-vs-inner is readable in
+          one line.
+       3. If nothing covers half the task (it straddled several sibling
+          sections), fall back to dropping measures that strictly contain
+          another overlapping one, which still leaves the innermost sections.
+
+     An outer name appearing ALONE is itself a result: it means the task sat
+     inside that function but no instrumented section within it accounted for
+     the bulk, so the time is in code that still has no marks around it.
+
+     Durations are printed so an outer measure sitting well above its inner
+     ones is obvious at a glance. Cached on the task once it resolves to
+     something, so the label survives the measure window scrolling past. */
+  function dbgAttribute(task){
+    const t0=task.start, t1=task.start+task.dur;
+    const span=task.dur>0?task.dur:1;
+    const hit=[];
+    for(let i=0;i<dbg.measures.length;i++){
+      const m=dbg.measures[i];
+      if(m.end>=t0 && m.start<=t1) hit.push(m);
+    }
+    if(!hit.length) return '';
+
+    /* Aggregate by name FIRST. A section that ran twice inside one task -
+       two forced reflows either side of a style write, say - is one piece of
+       code, and testing each half against the coverage bar on its own would
+       let both fall under it and hand the blame back to the ancestor. */
+    const stats={}, order=[];
+    hit.forEach(m=>{
+      if(stats[m.name]===undefined){ stats[m.name]={n:0, ms:0, ov:0}; order.push(m.name); }
+      const st=stats[m.name];
+      st.n++;
+      st.ms+=m.end-m.start;                                    // for display
+      st.ov+=Math.min(m.end,t1)-Math.max(m.start,t0);           // for coverage
+    });
+
+    let names=order.filter(n=> stats[n].ov/span>=0.5);
+    if(!names.length){
+      // Nothing covers the task on its own: drop ancestors, keep the leaves.
+      const leaves=hit.filter(m=> !hit.some(n=> n!==m &&
+        n.start>=m.start && n.end<=m.end && (n.start>m.start || n.end<m.end)));
+      const leafNames={};
+      leaves.forEach(m=> leafNames[m.name]=true);
+      names=order.filter(n=> leafNames[n]);
+      if(!names.length) names=order.slice();   // identical windows: nothing to narrow
+    }
+    names.sort((a,b)=> stats[a].ms-stats[b].ms);   // most specific first
+
+    const SHOW=3;
+    const out=names.slice(0,SHOW).map(n=>{
+      const st=stats[n];
+      return n+(st.n>1?' x'+st.n:'')+' <span class="dbg-dim">'+Math.round(st.ms)+'ms</span>';
+    });
+    if(names.length>SHOW) out.push('<span class="dbg-dim">+'+(names.length-SHOW)+'</span>');
+    return out.join(', ');
+  }
+
+  function dbgEnsureStyle(){
+    if(document.getElementById('dbgStyle')) return;
+    const st=document.createElement('style');
+    st.id='dbgStyle';
+    st.textContent=
+      '#dbgPanel{position:fixed;left:6px;bottom:6px;z-index:9999;max-width:min(94vw,340px);'+
+      'max-height:46vh;overflow:auto;background:rgba(4,6,12,.86);color:#EDEFF5;'+
+      "font:11px/1.4 'JetBrains Mono',monospace;padding:7px 9px;border-radius:8px;"+
+      'border:1px solid rgba(255,255,255,.18);pointer-events:none;'+
+      '-webkit-user-select:none;user-select:none;}'+
+      '#dbgPanel b{color:#2DE1C2;font-weight:700;}'+
+      '#dbgPanel .dbg-warn{color:#FFC15E;}'+
+      '#dbgPanel .dbg-hit{color:#FF5D73;font-weight:700;}'+
+      '#dbgPanel .dbg-dim{color:#828AA0;}'+
+      '#dbgToast{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:10000;'+
+      'background:rgba(4,6,12,.92);color:#EDEFF5;border:1px solid rgba(255,255,255,.22);'+
+      "font:600 12px/1 'JetBrains Mono',monospace;padding:9px 14px;border-radius:999px;"+
+      'pointer-events:none;}'+
+      '.brand{-webkit-user-select:none;user-select:none;}';
+    document.head.appendChild(st);
+  }
+
+  function dbgToast(msg){
+    dbgEnsureStyle();
+    const old=document.getElementById('dbgToast');
+    if(old) old.remove();
+    const el=document.createElement('div');
+    el.id='dbgToast';
+    el.textContent=msg;
+    document.body.appendChild(el);
+    setTimeout(()=>{ if(el.parentNode) el.remove(); }, 1400);
+  }
+
+  function dbgFrame(now){
+    dbg.frames.push(now);
+    while(dbg.frames.length>2 && now-dbg.frames[0]>1000) dbg.frames.shift();
+    // Safari/iOS has no longtask entry type; approximate it from frame gaps so
+    // the log is still useful there. Flagged with a leading "~" in the panel.
+    if(!dbg.longtaskSupported && dbg.frames.length>1){
+      const gap=now-dbg.frames[dbg.frames.length-2];
+      if(gap>=DBG_LONGTASK_MS){
+        dbg.tasks.push({start:now-gap, dur:gap, src:'gap', attr:''});
+        if(dbg.tasks.length>DBG_LOG_MAX) dbg.tasks.shift();
+      }
+    }
+    if(now-dbg.lastPaint>=DBG_PAINT_MS){ dbg.lastPaint=now; dbgRender(); }
+    dbg.raf=requestAnimationFrame(dbgFrame);
+  }
+
+  function dbgRender(){
+    if(!dbg.panel) return;
+    const now=performance.now();
+
+    let fps=0, worst=0;
+    if(dbg.frames.length>1){
+      const span=dbg.frames[dbg.frames.length-1]-dbg.frames[0];
+      if(span>0) fps=Math.round((dbg.frames.length-1)*1000/span);
+      for(let i=1;i<dbg.frames.length;i++){
+        const gap=dbg.frames[i]-dbg.frames[i-1];
+        if(gap>worst) worst=gap;
+      }
+    }
+
+    let filled=0, total=0;
+    if(grid){
+      for(let r=0;r<grid.length;r++){
+        const row=grid[r];
+        for(let c=0;c<row.length;c++){ total++; if(row[c]) filled++; }
+      }
+    }
+
+    const lines=[];
+    lines.push('<b>FPS '+fps+'</b> <span class="dbg-dim">worst frame '+Math.round(worst)+'ms</span>');
+    lines.push('stage '+stageIndex+'  '+COLS+'x'+ROWS+'  cells '+filled+'/'+total+'  tier '+qualityTier+
+               '  <span class="dbg-dim">'+(isMobile?'mobile':'desktop')+'</span>');
+    if(!dbg.longtaskSupported) lines.push('<span class="dbg-warn">no longtask API - frame gaps (~)</span>');
+    lines.push('<span class="dbg-dim">-- last '+DBG_LOG_MAX+' tasks &gt;'+DBG_LONGTASK_MS+'ms --</span>');
+    if(!dbg.tasks.length){
+      lines.push('<span class="dbg-dim">(none yet)</span>');
+    } else {
+      for(let i=dbg.tasks.length-1;i>=0;i--){   // newest first
+        const t=dbg.tasks[i];
+        if(!t.attr) t.attr=dbgAttribute(t);
+        lines.push('<span class="dbg-hit">'+(t.src==='gap'?'~':'')+Math.round(t.dur)+'ms</span> '+
+                   '<span class="dbg-dim">'+((now-(t.start+t.dur))/1000).toFixed(1)+'s ago</span> '+
+                   (t.attr||'<span class="dbg-warn">?</span>'));
+      }
+    }
+    dbg.panel.innerHTML=lines.join('<br>');
+  }
+
+  function dbgToggle(){
+    dbg.on=!dbg.on;
+    if(dbg.on){
+      dbgEnsureStyle();
+      if(!dbg.panel){
+        dbg.panel=document.createElement('div');
+        dbg.panel.id='dbgPanel';
+        document.body.appendChild(dbg.panel);
+      }
+      dbg.panel.style.display='block';
+      dbg.frames.length=0; dbg.lastPaint=0;
+      dbgRender();
+      dbg.raf=requestAnimationFrame(dbgFrame);
+    } else {
+      if(dbg.raf) cancelAnimationFrame(dbg.raf);
+      dbg.raf=0;
+      dbg.frames.length=0;
+      if(dbg.panel) dbg.panel.style.display='none';
+    }
+    dbgToast('Debug mode '+(dbg.on?'ON':'OFF'));
+  }
+
+  (function dbgBindGesture(){
+    const brandEl=document.querySelector('.brand');
+    if(!brandEl) return;
+    brandEl.addEventListener('click', ()=>{
+      const now=Date.now();
+      dbg.taps.push(now);
+      while(dbg.taps.length && now-dbg.taps[0]>DBG_TAP_WINDOW) dbg.taps.shift();
+      if(dbg.taps.length>=DBG_TAPS_NEEDED){ dbg.taps.length=0; dbgToggle(); }
+    });
+  })();
+
+  /* ============ END TEMPORARY DEBUG OVERLAY — safe to delete ============ */
 
   setInterval(tick, 100);
 })();
