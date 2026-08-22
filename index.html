@@ -262,16 +262,29 @@
 
   .cell.grabbed{ transform:scale(.92) !important; }
 
+  /* iOS Safari compositor hint: profiling on device showed main-thread stalls
+     during cascade bursts that were NOT attributable to any instrumented JS
+     function (JS execution measured fast), pointing at style/paint/composite
+     work rather than script. will-change promotes only the cells that are
+     actively animating to their own GPU layer for the duration of the
+     animation, so the burst composites instead of repainting on the main
+     thread. Deliberately scoped to the transient state classes only -- the
+     classes are removed (or the cell repainted via className reassignment)
+     when the animation ends, so the hint is dropped with them. Permanent
+     promotion of all 150+ cells would cost memory and can backfire.
+     Rendering hint only: no visual, layout, or timing change. */
   /* whole-group preview highlight (shown live while pressing/dragging) */
   .cell.preview{
     transform:scale(1.08) !important;
     box-shadow:0 0 0 3px rgba(255,255,255,.9), 0 0 16px 4px rgba(255,255,255,.5) !important;
     z-index:3;
+    will-change:transform, opacity;
   }
   .cell.preview-blast{
     transform:scale(1.08) !important;
     box-shadow:0 0 0 3px var(--bomb-spark), 0 0 16px 4px rgba(255,209,102,.55) !important;
     z-index:3;
+    will-change:transform, opacity;
   }
 
   .cell[class*="c-"]{
@@ -354,13 +367,13 @@
     animation:bombPulse .7s ease-in-out infinite;
   }
 
-  .cell.nudge{ animation:nudge 180ms ease; }
+  .cell.nudge{ animation:nudge 180ms ease; will-change:transform, opacity; }
   @keyframes nudge{
     0%,100%{ transform:scale(1); }
     50%{ transform:scale(.84); }
   }
 
-  .cell.drop-in{ animation:dropIn 320ms cubic-bezier(.34,1.56,.64,1); }
+  .cell.drop-in{ animation:dropIn 320ms cubic-bezier(.34,1.56,.64,1); will-change:transform, opacity; }
   @keyframes dropIn{
     from{ transform:translateY(-160%); opacity:0; }
     to{ transform:translateY(0); opacity:1; }
@@ -371,6 +384,7 @@
     animation-delay:var(--pop-delay,0ms);
     pointer-events:none;
     z-index:5;
+    will-change:transform, opacity;
   }
   @keyframes popAnim{
     0%{ transform:scale(1); opacity:1; }
