@@ -35,9 +35,49 @@
        touch devices once the grid has grown. On desktop it stays at 1, so each
        calc() resolves to exactly the original hardcoded px value. */
     --glow-blur-scale:1;
+    /* Mobile-only adaptive visual quality, part two: continuous paint cost.
+       Profiling on iOS Safari showed 50-650ms long tasks recurring every
+       0.5-1s with ZERO game logic running (post-game-over screen, gameActive
+       false). The cost was the always-on infinite CSS animations below
+       repainting under the overlay's backdrop-filter blur. These knobs bound
+       those animations and shrink that blur; they are only ever overridden
+       via :root.q-mobile (see isMobile in the script), so on desktop each one
+       resolves to exactly the original hardcoded value. */
+    --orb-spin-duration:6s;
+    --orb-spin-iterations:infinite;
+    --orb-pulse-duration:2.4s;
+    --orb-pulse-iterations:infinite;
+    --danger-pulse-iterations:infinite;
+    --overlay-blur:6px;
     --font-display:'Space Grotesk',sans-serif;
     --font-body:'Inter',sans-serif;
     --font-mono:'JetBrains Mono',monospace;
+  }
+
+  /* Mobile-only overrides for the continuous-paint knobs above. The class is
+     added to <html> once at startup from the same isMobile feature test that
+     drives qualityTier, so desktop never matches this block and keeps the
+     infinite animations and the 6px blur exactly as they were. Unlike
+     --glow-blur-scale these are fixed for the session (they do not vary with
+     tier), so they live here next to the rules they feed rather than in JS. */
+  :root.q-mobile{
+    /* Bounded intro flourish instead of forever: one 3s rotation and two 1.5s
+       glow pulses, both finishing at 3s and then holding a static end state
+       (animation-fill-mode:forwards on .orb-button). Stops the orb from
+       repainting under the overlay blur for the whole time a start / pause /
+       game-over screen sits idle. */
+    --orb-spin-duration:3s;
+    --orb-spin-iterations:1;
+    --orb-pulse-duration:1.5s;
+    --orb-pulse-iterations:2;
+    /* Danger glow: 2.5 pulses, then hold, rather than pulsing for the entire
+       length of a full-board endgame. The half cycle is deliberate -- it ends
+       on the 50% keyframe (opacity 1), which is .danger-glow.active's own base
+       opacity, so it settles onto the elevated state with no visible snap. */
+    --danger-pulse-iterations:2.5;
+    /* backdrop-filter blur multiplies the cost of everything painted behind
+       it; a smaller radius makes each recompute far cheaper on iOS Safari. */
+    --overlay-blur:2.5px;
   }
 
   *{ box-sizing:border-box; }
@@ -169,7 +209,16 @@
     transition:opacity .5s ease;
     pointer-events:none;
   }
-  .danger-glow.active{ opacity:1; animation:dangerPulse 1.3s ease-in-out infinite; }
+  /* Mobile-only adaptive quality: on a full/overflowing board this pulse used
+     to run for the whole rest of the run -- and kept running behind the
+     overlay blur after game over, which profiling tied to long-task stalls
+     with no JS executing at all. On touch devices it now runs a fixed few
+     cycles and holds (forwards) at the elevated end state; desktop keeps the
+     infinite pulse. */
+  .danger-glow.active{
+    opacity:1;
+    animation:dangerPulse 1.3s ease-in-out var(--danger-pulse-iterations);
+  }
   @keyframes dangerPulse{
     0%,100%{ opacity:.55; }
     50%{ opacity:1; }
@@ -584,7 +633,11 @@
     position:fixed;
     inset:0;
     background:rgba(6,8,13,.82);
-    backdrop-filter:blur(6px);
+    /* Mobile-only adaptive quality: blur(6px) is expensive on iOS Safari and
+       has to be recomputed whenever anything behind it paints, which is what
+       made the idle overlays stall. The radius drops on touch devices (see
+       :root.q-mobile); desktop stays at 6px. */
+    backdrop-filter:blur(var(--overlay-blur));
     display:flex;
     align-items:center;
     justify-content:center;
@@ -656,7 +709,15 @@
     position:relative;
     margin:6px 0 0;
     background:conic-gradient(from 0deg, var(--accent-coral), var(--accent-amber), var(--accent-lime), var(--accent-teal), var(--accent-violet), var(--accent-coral));
-    animation:spin 6s linear infinite, pulseGlow 2.4s ease-in-out infinite;
+    /* Mobile-only adaptive quality: these two ran forever, including for as
+       long as an overlay sat idle (start / pause / game-over) and directly
+       under the overlay's backdrop-filter -- the profiled stalls continued
+       with gameActive false, i.e. with zero JS executing. On touch devices the
+       custom properties turn this into a bounded intro that settles into a
+       static glow; desktop keeps both animations infinite, where forwards is
+       a no-op. */
+    animation:spin var(--orb-spin-duration) linear var(--orb-spin-iterations) forwards,
+              pulseGlow var(--orb-pulse-duration) ease-in-out var(--orb-pulse-iterations) forwards;
   }
   .orb-button::after{
     content:'START';
@@ -860,15 +921,31 @@
     }catch(e){ return false; }
   })();
 
+  /* Gate for the CSS half of the continuous-paint fixes (see :root.q-mobile in
+     the stylesheet): bounded orb / danger-glow animations and a smaller
+     overlay backdrop blur. Set once -- unlike qualityTier these do not vary
+     with stageIndex -- and never added on desktop. */
+  if(isMobile) document.documentElement.classList.add('q-mobile');
+
   // Both indexed by qualityTier; index 0 is the untouched desktop quality.
   const QUALITY_GLOW_SCALE=[1, 0.7, 0.45];
   const QUALITY_PARTICLE_SCALE=[1, 0.65, 0.45];
+  /* Hard ceilings on how many pop-effect elements may animate at once during a
+     single cascade. Tier 2 is mobile-only and late-game, where popping cells,
+     particles, spark-lines and floaters all overlap; index 0 and 1 keep the
+     previous global values so desktop and early mobile are unchanged. */
+  const QUALITY_MAX_LINES=[40, 40, 16];
+  const QUALITY_MAX_PARTICLES=[56, 56, 24];
   // stageIndex breakpoints. GROWTH_STAGES has 5 entries so stageIndex tops out
   // at 5: full quality for the first two grid sizes, then one step down at
   // each of these, i.e. tier 1 at stageIndex 2-3 and tier 2 at stageIndex 4+.
   const QUALITY_TIER_STAGES=[2,4];
   const BOMB_FREEZE_MIN_TIER=1;   // freeze the idle bomb pulse from this tier up
-  const BOMB_FREEZE_MIN_BOMBS=3;  // ...once this many bombs share the board
+  /* ...once this many bombs share the board. Profiling showed even a couple of
+     permanently animating elements sustain the idle long-task stalls, so on
+     touch devices a single bomb is enough to freeze the pulse from tier 1 up.
+     Desktop keeps 3 (academic -- qualityTier is pinned to 0 there). */
+  const BOMB_FREEZE_MIN_BOMBS=isMobile?1:3;
   let qualityTier=0;
 
   /* Recomputed wherever stageIndex changes (growGrid via checkGrowth, and the
@@ -1749,7 +1826,7 @@
     };
 
     let maxDepth=0;
-    const MAX_LINES=40;
+    const MAX_LINES=QUALITY_MAX_LINES[qualityTier];
     let lineCount=0;
     edges.forEach(edge=>{
       maxDepth=Math.max(maxDepth, edge.depth+1);
@@ -1772,9 +1849,11 @@
 
     /* Mobile-only adaptive quality: qualityParticles() is the identity on
        desktop (qualityTier 0) and thins bursts out at higher mobile tiers.
-       MAX_PARTICLES stays a hard ceiling on every device regardless. */
+       MAX_PARTICLES stays a hard ceiling on every device regardless, and drops
+       further at mobile tier 2 so a big cascade cannot put an unbounded number
+       of elements on screen animating simultaneously. */
     const particleBudget = qualityParticles(group.length>18?2:group.length>10?3:5);
-    const MAX_PARTICLES=56;
+    const MAX_PARTICLES=QUALITY_MAX_PARTICLES[qualityTier];
     let particlesSpawned=0;
     const spendParticles=(x,y,color,want,delay)=>{
       const budget=Math.min(want, Math.max(0,MAX_PARTICLES-particlesSpawned));
