@@ -30,54 +30,9 @@
     --danger:#FF3B4E;
     --bomb-core:#232A3D;
     --bomb-spark:#FFD166;
-    /* Mobile-only adaptive visual quality. Multiplier for every glow blur
-       radius below; JS (see qualityTier in the script) only ever lowers it on
-       touch devices once the grid has grown. On desktop it stays at 1, so each
-       calc() resolves to exactly the original hardcoded px value. */
-    --glow-blur-scale:1;
-    /* Mobile-only adaptive visual quality, part two: continuous paint cost.
-       Profiling on iOS Safari showed 50-650ms long tasks recurring every
-       0.5-1s with ZERO game logic running (post-game-over screen, gameActive
-       false). The cost was the always-on infinite CSS animations below
-       repainting under the overlay's backdrop-filter blur. These knobs bound
-       those animations and shrink that blur; they are only ever overridden
-       via :root.q-mobile (see isMobile in the script), so on desktop each one
-       resolves to exactly the original hardcoded value. */
-    --orb-spin-duration:6s;
-    --orb-spin-iterations:infinite;
-    --orb-pulse-duration:2.4s;
-    --orb-pulse-iterations:infinite;
-    --danger-pulse-iterations:infinite;
-    --overlay-blur:6px;
     --font-display:'Space Grotesk',sans-serif;
     --font-body:'Inter',sans-serif;
     --font-mono:'JetBrains Mono',monospace;
-  }
-
-  /* Mobile-only overrides for the continuous-paint knobs above. The class is
-     added to <html> once at startup from the same isMobile feature test that
-     drives qualityTier, so desktop never matches this block and keeps the
-     infinite animations and the 6px blur exactly as they were. Unlike
-     --glow-blur-scale these are fixed for the session (they do not vary with
-     tier), so they live here next to the rules they feed rather than in JS. */
-  :root.q-mobile{
-    /* Bounded intro flourish instead of forever: one 3s rotation and two 1.5s
-       glow pulses, both finishing at 3s and then holding a static end state
-       (animation-fill-mode:forwards on .orb-button). Stops the orb from
-       repainting under the overlay blur for the whole time a start / pause /
-       game-over screen sits idle. */
-    --orb-spin-duration:3s;
-    --orb-spin-iterations:1;
-    --orb-pulse-duration:1.5s;
-    --orb-pulse-iterations:2;
-    /* Danger glow: 2.5 pulses, then hold, rather than pulsing for the entire
-       length of a full-board endgame. The half cycle is deliberate -- it ends
-       on the 50% keyframe (opacity 1), which is .danger-glow.active's own base
-       opacity, so it settles onto the elevated state with no visible snap. */
-    --danger-pulse-iterations:2.5;
-    /* backdrop-filter blur multiplies the cost of everything painted behind
-       it; a smaller radius makes each recompute far cheaper on iOS Safari. */
-    --overlay-blur:2.5px;
   }
 
   *{ box-sizing:border-box; }
@@ -201,64 +156,26 @@
     position:absolute;
     inset:0;
     border-radius:18px;
-    /* Mobile-only adaptive quality: this glow is a gradient rather than a
-       box-shadow, so the scale shrinks its soft falloff (the "blur" here)
-       instead of a blur radius. Colour stops are untouched. */
-    background:radial-gradient(ellipse 100% calc(26% * var(--glow-blur-scale)) at 50% 0%, rgba(255,59,78,.35), transparent 70%);
+    background:radial-gradient(ellipse 100% 26% at 50% 0%, rgba(255,59,78,.35), transparent 70%);
     opacity:0;
     transition:opacity .5s ease;
     pointer-events:none;
   }
-  /* Mobile-only adaptive quality: on a full/overflowing board this pulse used
-     to run for the whole rest of the run -- and kept running behind the
-     overlay blur after game over, which profiling tied to long-task stalls
-     with no JS executing at all. On touch devices it now runs a fixed few
-     cycles and holds (forwards) at the elevated end state; desktop keeps the
-     infinite pulse. */
-  .danger-glow.active{
-    opacity:1;
-    animation:dangerPulse 1.3s ease-in-out var(--danger-pulse-iterations);
-  }
+  .danger-glow.active{ opacity:1; animation:dangerPulse 1.3s ease-in-out infinite; }
   @keyframes dangerPulse{
     0%,100%{ opacity:.55; }
     50%{ opacity:1; }
   }
 
-  .warning-line{
-    position:absolute;
-    left:clamp(6px,1.4vw,10px);
-    right:clamp(6px,1.4vw,10px);
-    top:0;
-    height:0;
-    border-top:2px dashed var(--danger);
-    opacity:.5;
-    pointer-events:none;
-    filter:drop-shadow(0 0 4px var(--danger));
-    z-index:2;
-  }
-
-  .cell.buffer-row.empty{
-    background:rgba(255,59,78,0.05);
-  }
-
-  .grid{
+  #gameCanvas{
     position:relative;
     width:100%;
     height:100%;
-    display:grid;
-    grid-template-columns:repeat(var(--cols),1fr);
-    grid-template-rows:repeat(var(--rows),1fr);
-    gap:clamp(3px,1vw,6px);
+    display:block;
     touch-action:none;
     -webkit-user-select:none;
     user-select:none;
-  }
-
-  .spark-overlay, .particles-layer, .floaters-layer{
-    position:absolute;
-    inset:clamp(6px,1.4vw,10px);
-    pointer-events:none;
-    overflow:visible;
+    border-radius:12px;
   }
 
   .expand-flash{
@@ -285,253 +202,6 @@
     15%{ opacity:1; transform:scale(1); }
     78%{ opacity:1; }
     100%{ opacity:0; transform:scale(1.04); }
-  }
-
-  /* ---------- Cells ---------- */
-  .cell{
-    width:100%;
-    height:100%;
-    border:none;
-    border-radius:50%;
-    padding:0;
-    margin:0;
-    cursor:pointer;
-    position:relative;
-    transition:transform .12s ease, box-shadow .12s ease;
-    background:transparent;
-    touch-action:none;
-  }
-  .cell:focus-visible{
-    outline:2px solid var(--text-primary);
-    outline-offset:3px;
-  }
-  .cell.empty{ cursor:default; box-shadow:none; }
-  .cell:not(.empty):hover{ transform:scale(1.07); }
-  .cell.type-bomb, .cell.type-prism{ cursor:grab; }
-
-  .cell.grabbed{ transform:scale(.92) !important; }
-
-  /* iOS Safari compositor hint: profiling on device showed main-thread stalls
-     during cascade bursts that were NOT attributable to any instrumented JS
-     function (JS execution measured fast), pointing at style/paint/composite
-     work rather than script. will-change promotes only the cells that are
-     actively animating to their own GPU layer for the duration of the
-     animation, so the burst composites instead of repainting on the main
-     thread. Deliberately scoped to the transient state classes only -- the
-     classes are removed (or the cell repainted via className reassignment)
-     when the animation ends, so the hint is dropped with them. Permanent
-     promotion of all 150+ cells would cost memory and can backfire.
-     Rendering hint only: no visual, layout, or timing change. */
-  /* whole-group preview highlight (shown live while pressing/dragging) */
-  .cell.preview{
-    transform:scale(1.08) !important;
-    box-shadow:0 0 0 3px rgba(255,255,255,.9), 0 0 16px 4px rgba(255,255,255,.5) !important;
-    z-index:3;
-    will-change:transform, opacity;
-  }
-  .cell.preview-blast{
-    transform:scale(1.08) !important;
-    box-shadow:0 0 0 3px var(--bomb-spark), 0 0 16px 4px rgba(255,209,102,.55) !important;
-    z-index:3;
-    will-change:transform, opacity;
-  }
-
-  .cell[class*="c-"]{
-    background:radial-gradient(circle at 32% 26%, color-mix(in srgb, var(--orb) 50%, white 50%), var(--orb) 66%);
-    /* blur radius is scaled by mobile adaptive quality; colour/spread fixed */
-    box-shadow:0 0 calc(10px * var(--glow-blur-scale)) -1px color-mix(in srgb, var(--orb) 70%, transparent 30%), inset 0 -4px 7px rgba(0,0,0,.28);
-  }
-  .cell.c-coral{ --orb:var(--accent-coral); }
-  .cell.c-amber{ --orb:var(--accent-amber); }
-  .cell.c-teal{ --orb:var(--accent-teal); }
-  .cell.c-violet{ --orb:var(--accent-violet); }
-  .cell.c-lime{ --orb:var(--accent-lime); }
-
-  .cell.type-prism{
-    background:conic-gradient(from 0deg, var(--accent-coral), var(--accent-amber), var(--accent-lime), var(--accent-teal), var(--accent-violet), var(--accent-coral));
-    box-shadow:0 0 calc(12px * var(--glow-blur-scale)) -1px rgba(255,255,255,.5), inset 0 -4px 7px rgba(0,0,0,.25);
-  }
-
-  .cell.type-bomb{
-    background:radial-gradient(circle at 34% 28%, #3b4258, var(--bomb-core) 72%);
-    box-shadow:0 0 calc(14px * var(--glow-blur-scale)) -2px var(--bomb-spark), inset 0 -4px 8px rgba(0,0,0,.4);
-  }
-  .cell.type-bomb::after{
-    content:'✺';
-    position:absolute;
-    inset:0;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    color:var(--bomb-spark);
-    font-size:min(3.4vw,15px);
-    animation:bombPulse 1.1s ease-in-out infinite;
-  }
-  @keyframes bombPulse{
-    0%,100%{ opacity:.6; transform:scale(.88); }
-    50%{ opacity:1; transform:scale(1.12); }
-  }
-
-  /* Mobile-only adaptive quality: the bomb glyphs pulse forever, which keeps
-     repainting even when the board is idle. JS adds .q-freeze-bombs to the grid
-     on touch devices once qualityTier is high enough and several bombs share
-     the board (never on desktop). The glyph settles at full size/opacity so a
-     bomb still reads as a bomb -- it just stops being permanently mid-pulse. */
-  .grid.q-freeze-bombs .cell.type-bomb::after,
-  .grid.q-freeze-bombs .cell.type-bomb-big::after,
-  .grid.q-freeze-bombs .cell.type-bomb-mega::after{
-    animation:none;
-  }
-
-  .cell.type-bomb-big{
-    background:radial-gradient(circle at 34% 28%, #4a3550, var(--bomb-core) 72%);
-    box-shadow:0 0 calc(17px * var(--glow-blur-scale)) -1px var(--accent-coral), inset 0 -4px 8px rgba(0,0,0,.4);
-  }
-  .cell.type-bomb-big::after{
-    content:'✹';
-    position:absolute;
-    inset:0;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    color:var(--accent-coral);
-    font-size:min(3.6vw,16px);
-    animation:bombPulse .9s ease-in-out infinite;
-  }
-
-  .cell.type-bomb-mega{
-    background:conic-gradient(from 0deg, var(--bomb-core), #55355f, var(--bomb-core), #3b2f52, var(--bomb-core));
-    box-shadow:0 0 calc(20px * var(--glow-blur-scale)) -1px var(--accent-violet), 0 0 calc(14px * var(--glow-blur-scale)) -2px var(--accent-lime), inset 0 -4px 8px rgba(0,0,0,.4);
-  }
-  .cell.type-bomb-mega::after{
-    content:'✺';
-    position:absolute;
-    inset:0;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    color:#fff;
-    text-shadow:0 0 7px var(--bomb-spark);
-    font-size:min(3.8vw,17px);
-    animation:bombPulse .7s ease-in-out infinite;
-  }
-
-  .cell.nudge{ animation:nudge 180ms ease; will-change:transform, opacity; }
-  @keyframes nudge{
-    0%,100%{ transform:scale(1); }
-    50%{ transform:scale(.84); }
-  }
-
-  .cell.drop-in{ animation:dropIn 320ms cubic-bezier(.34,1.56,.64,1); will-change:transform, opacity; }
-  @keyframes dropIn{
-    from{ transform:translateY(-160%); opacity:0; }
-    to{ transform:translateY(0); opacity:1; }
-  }
-
-  .cell.popping{
-    animation:popAnim 380ms ease-in forwards;
-    animation-delay:var(--pop-delay,0ms);
-    pointer-events:none;
-    z-index:5;
-    will-change:transform, opacity;
-  }
-  @keyframes popAnim{
-    0%{ transform:scale(1); opacity:1; }
-    25%{ transform:scale(1.32); opacity:1; }
-    100%{ transform:scale(.15); opacity:0; }
-  }
-
-  /* ---------- Spark lines / particles / floaters ---------- */
-  .spark-line{
-    fill:none;
-    stroke-width:3;
-    stroke-linecap:round;
-    stroke-dasharray:1;
-    stroke-dashoffset:1;
-    opacity:.9;
-    animation:sparkTravel var(--dur,320ms) ease-out var(--delay,0ms) forwards;
-  }
-  @keyframes sparkTravel{
-    0%{ stroke-dashoffset:1; opacity:.9; }
-    60%{ stroke-dashoffset:0; opacity:.9; }
-    100%{ stroke-dashoffset:0; opacity:0; }
-  }
-
-  /* live drag indicator */
-  .drag-overlay{ overflow:visible; }
-  .drag-line{
-    stroke-width:3;
-    stroke-linecap:round;
-    stroke-dasharray:6 5;
-    opacity:0;
-    filter:drop-shadow(0 0 6px currentColor);
-    transition:opacity .1s ease;
-  }
-  .drag-line.show{ opacity:.85; animation:dashMarch .5s linear infinite; }
-  @keyframes dashMarch{ to{ stroke-dashoffset:-22; } }
-  .drag-puck{
-    opacity:0;
-    filter:drop-shadow(0 0 8px currentColor);
-    transition:opacity .1s ease;
-  }
-  .drag-puck.show{ opacity:1; }
-
-  .particle{
-    position:absolute;
-    width:6px;
-    height:6px;
-    margin:-3px;
-    border-radius:50%;
-    left:var(--x);
-    top:var(--y);
-    background:var(--pc);
-    opacity:0;
-    box-shadow:0 0 3px var(--pc);
-    animation:particleFly 560ms ease-out forwards;
-    animation-delay:var(--delay,0ms);
-  }
-  @keyframes particleFly{
-    0%{ opacity:0; transform:translate(0,0) scale(1); }
-    10%{ opacity:1; }
-    100%{ opacity:0; transform:translate(var(--dx),var(--dy)) scale(.2); }
-  }
-
-  .floater{
-    position:absolute;
-    left:0; top:0;
-    transform:translate(-50%,-50%);
-    display:flex;
-    flex-direction:column;
-    align-items:center;
-    gap:2px;
-    animation:floatUp 1s ease-out forwards;
-    z-index:6;
-  }
-  .floater .fpts{
-    font-family:var(--font-mono);
-    font-weight:700;
-    font-size:clamp(14px,2.4vmin,20px);
-    color:var(--text-primary);
-    text-shadow:0 1px 8px rgba(0,0,0,.7);
-  }
-  .floater .ftier{
-    font-family:var(--font-display);
-    font-weight:700;
-    font-size:clamp(10px,1.9vmin,14px);
-    letter-spacing:.05em;
-    text-shadow:0 0 10px rgba(255,255,255,.4);
-  }
-  .floater .fcombo{
-    font-family:var(--font-display);
-    font-weight:700;
-    font-size:clamp(9px,1.6vmin,12px);
-    color:var(--accent-amber);
-    letter-spacing:.06em;
-  }
-  @keyframes floatUp{
-    0%{ transform:translate(-50%,-50%) scale(.8); opacity:0; }
-    12%{ opacity:1; transform:translate(-50%,-50%) scale(1); }
-    100%{ transform:translate(-50%,-180%) scale(1); opacity:0; }
   }
 
   /* ---------- Combo & spawn meters ---------- */
@@ -633,11 +303,7 @@
     position:fixed;
     inset:0;
     background:rgba(6,8,13,.82);
-    /* Mobile-only adaptive quality: blur(6px) is expensive on iOS Safari and
-       has to be recomputed whenever anything behind it paints, which is what
-       made the idle overlays stall. The radius drops on touch devices (see
-       :root.q-mobile); desktop stays at 6px. */
-    backdrop-filter:blur(var(--overlay-blur));
+    backdrop-filter:blur(6px);
     display:flex;
     align-items:center;
     justify-content:center;
@@ -709,15 +375,7 @@
     position:relative;
     margin:6px 0 0;
     background:conic-gradient(from 0deg, var(--accent-coral), var(--accent-amber), var(--accent-lime), var(--accent-teal), var(--accent-violet), var(--accent-coral));
-    /* Mobile-only adaptive quality: these two ran forever, including for as
-       long as an overlay sat idle (start / pause / game-over) and directly
-       under the overlay's backdrop-filter -- the profiled stalls continued
-       with gameActive false, i.e. with zero JS executing. On touch devices the
-       custom properties turn this into a bounded intro that settles into a
-       static glow; desktop keeps both animations infinite, where forwards is
-       a no-op. */
-    animation:spin var(--orb-spin-duration) linear var(--orb-spin-iterations) forwards,
-              pulseGlow var(--orb-pulse-duration) ease-in-out var(--orb-pulse-iterations) forwards;
+    animation:spin 6s linear infinite, pulseGlow 2.4s ease-in-out infinite;
   }
   .orb-button::after{
     content:'START';
@@ -745,7 +403,7 @@
   }
 
   @media (prefers-reduced-motion: reduce){
-    *{
+    .stage, .expand-flash, .danger-glow, .orb-button{
       animation-duration:.001ms !important;
       animation-iteration-count:1 !important;
       transition-duration:.001ms !important;
@@ -777,15 +435,7 @@
   <main class="stage" id="stage">
     <div class="grid-wrap" id="gridWrap">
       <div class="danger-glow" id="dangerGlow"></div>
-      <div class="grid" id="grid"></div>
-      <div class="warning-line" id="warningLine"></div>
-      <svg class="spark-overlay" id="sparkSvg"></svg>
-      <div class="particles-layer" id="particlesLayer"></div>
-      <div class="floaters-layer" id="floatersLayer"></div>
-      <svg class="spark-overlay drag-overlay" id="dragSvg">
-        <line id="dragLine" class="drag-line"></line>
-        <circle id="dragPuck" class="drag-puck" r="6"></circle>
-      </svg>
+      <canvas id="gameCanvas" role="img" aria-label="Game board"></canvas>
     </div>
 
     <div class="surge-row">
@@ -803,7 +453,7 @@
   </main>
 
   <div class="legend">
-    <span class="legend-item"><i class="chip bomb-chip"></i>Blast — tap to detonate, chains into anything caught in the blast</span>
+    <span class="legend-item"><i class="chip bomb-chip"></i>Blast — tap to pop it alone, drag to chain-detonate nearby</span>
     <span class="legend-item"><i class="chip prism-chip"></i>Prism — tap to auto-bond, drag toward a colour to choose it</span>
   </div>
 
@@ -812,7 +462,7 @@
       <h1>CHAIN REACTION</h1>
       <p class="tagline">Pop the pattern. Chase the cascade.</p>
       <button class="orb-button" id="startBtn" aria-label="Start game"></button>
-      <p class="hint">Click groups of 2+ matching orbs to trigger a chain — longer chains score far more.<br>Chains of 5+ trigger bonus rewards: 6 gifts a free prism, 7+ gifts a free bomb.<br>Drag prism orbs to aim them.<br>The dashed line marks the danger zone — it's only over when a column overflows above it. Tap ⚡ to skip the wait for the next surge.</p>
+      <p class="hint">Click groups of 2+ matching orbs to trigger a chain — longer chains score far more.<br>Chains of 5+ trigger bonus rewards: 6 gifts a free prism, 7+ gifts a free bomb.<br>Drag blast and prism orbs to aim them.<br>The dashed line marks the danger zone — it's only over when a column overflows above it. Tap ⚡ to skip the wait for the next surge.</p>
     </div>
   </div>
 
@@ -859,16 +509,37 @@
   const COMBO_BASE=3400, COMBO_SLOPE=230, COMBO_FLOOR=800;
   const BOMB_CHANCE_RANGE=[0.03,0.07], PRISM_CHANCE_RANGE=[0.04,0.10];
 
-  const gridEl=document.getElementById('grid');
+  /* ================= Palette (read from CSS so it stays in sync with :root) ================= */
+  const rootStyle=getComputedStyle(document.documentElement);
+  const cssVar=name=>rootStyle.getPropertyValue(name).trim();
+  const PALETTE={
+    coral:cssVar('--accent-coral'), amber:cssVar('--accent-amber'), teal:cssVar('--accent-teal'),
+    violet:cssVar('--accent-violet'), lime:cssVar('--accent-lime'),
+    danger:cssVar('--danger'), bombCore:cssVar('--bomb-core'), bombSpark:cssVar('--bomb-spark'),
+    textPrimary:cssVar('--text-primary')
+  };
+  function colorHexFor(color){ return PALETTE[color]||'#ffffff'; }
+  function hexToRgb(hex){
+    const h=hex.replace('#','');
+    const n=h.length===3 ? h.split('').map(c=>c+c).join('') : h;
+    const v=parseInt(n,16);
+    return {r:(v>>16)&255, g:(v>>8)&255, b:v&255};
+  }
+  function mixWithWhite(hex, ratio){
+    const {r,g,b}=hexToRgb(hex);
+    const mr=Math.round(r+(255-r)*ratio), mg=Math.round(g+(255-g)*ratio), mb=Math.round(b+(255-b)*ratio);
+    return `rgb(${mr},${mg},${mb})`;
+  }
+  function rgba(hex, a){
+    const {r,g,b}=hexToRgb(hex);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+  const SUPPORTS_CONIC = typeof CanvasRenderingContext2D!=='undefined' && !!CanvasRenderingContext2D.prototype.createConicGradient;
+
   const gridWrap=document.getElementById('gridWrap');
-  const sparkSvg=document.getElementById('sparkSvg');
-  const dragSvg=document.getElementById('dragSvg');
-  const dragLine=document.getElementById('dragLine');
-  const dragPuck=document.getElementById('dragPuck');
-  const particlesLayer=document.getElementById('particlesLayer');
-  const floatersLayer=document.getElementById('floatersLayer');
+  const canvas=document.getElementById('gameCanvas');
+  const ctx=canvas.getContext('2d');
   const dangerGlow=document.getElementById('dangerGlow');
-  const warningLine=document.getElementById('warningLine');
   const surgeBtn=document.getElementById('surgeBtn');
   const scoreVal=document.getElementById('scoreVal');
   const bestVal=document.getElementById('bestVal');
@@ -893,102 +564,26 @@
   let currentComboWindow=3400;
   let isResolving=false, gameActive=false, paused=false, pauseStartTime=0;
   let startTime=0, spawnAt=0, spawnInterval=3000;
-  let cellButtons=[];
   let soundOn=true, audioCtx=null;
   let pointerStart=null;
-  let lastPointerHandled=null;
   let lastSurgeAt=0;
   const SURGE_COOLDOWN=400;
+
+  /* ---------- render-only state (never read by game logic) ---------- */
+  let dpr=1;
+  let popEffects=new Map();      // key -> {startTime, delay, duration, cell:{type,color,radius}}
+  let dropInEffects=new Map();   // key -> {startTime, duration}
+  let nudgeEffects=new Map();    // key -> {startTime, duration}
+  let armedKey=null;             // "r_c" or null
+  let armedStartTime=0;
+  let grabbedKey=null;
   let previewKeys=new Set();
   let previewClassUsed=null;
-
-  /* ============ Mobile-only adaptive visual quality ============
-     Late-game boards grow (more glowing cells, more particles, more bombs
-     pulsing forever) and phones start dropping frames. Desktop is already
-     fine, so every quality reduction below is gated behind isMobile and MUST
-     collapse to "tier 0 == the original look" when it is false. This is not
-     dead code: it only engages on touch devices at higher stageIndex. */
-  const isMobile=(function(){
-    try{
-      const mm=window.matchMedia;
-      // Feature-test the pointing device instead of sniffing the UA string: a
-      // coarse / hover-less primary pointer combined with real touch points
-      // means phone or tablet, while a touchscreen laptop still reports a fine
-      // primary pointer and so stays on the desktop path.
-      const coarse=!!(mm && (mm('(pointer: coarse)').matches || mm('(hover: none)').matches));
-      const touch=(navigator.maxTouchPoints||0)>0 || 'ontouchstart' in window;
-      return coarse && touch;
-    }catch(e){ return false; }
-  })();
-
-  /* Gate for the CSS half of the continuous-paint fixes (see :root.q-mobile in
-     the stylesheet): bounded orb / danger-glow animations and a smaller
-     overlay backdrop blur. Set once -- unlike qualityTier these do not vary
-     with stageIndex -- and never added on desktop. */
-  if(isMobile) document.documentElement.classList.add('q-mobile');
-
-  // Both indexed by qualityTier; index 0 is the untouched desktop quality.
-  const QUALITY_GLOW_SCALE=[1, 0.7, 0.45];
-  const QUALITY_PARTICLE_SCALE=[1, 0.65, 0.45];
-  /* Hard ceilings on how many pop-effect elements may animate at once during a
-     single cascade. Tier 2 is mobile-only and late-game, where popping cells,
-     particles, spark-lines and floaters all overlap; index 0 and 1 keep the
-     previous global values so desktop and early mobile are unchanged. */
-  const QUALITY_MAX_LINES=[40, 40, 16];
-  const QUALITY_MAX_PARTICLES=[56, 56, 24];
-  // stageIndex breakpoints. GROWTH_STAGES has 5 entries so stageIndex tops out
-  // at 5: full quality for the first two grid sizes, then one step down at
-  // each of these, i.e. tier 1 at stageIndex 2-3 and tier 2 at stageIndex 4+.
-  const QUALITY_TIER_STAGES=[2,4];
-  const BOMB_FREEZE_MIN_TIER=1;   // freeze the idle bomb pulse from this tier up
-  /* ...once this many bombs share the board. Profiling showed even a couple of
-     permanently animating elements sustain the idle long-task stalls, so on
-     touch devices a single bomb is enough to freeze the pulse from tier 1 up.
-     Desktop keeps 3 (academic -- qualityTier is pinned to 0 there). */
-  const BOMB_FREEZE_MIN_BOMBS=isMobile?1:3;
-  let qualityTier=0;
-
-  /* Recomputed wherever stageIndex changes (growGrid via checkGrowth, and the
-     reset in startGame). Always resolves to 0 on desktop. */
-  function updateQualityTier(){
-    let tier=0;
-    if(isMobile){
-      for(let i=0;i<QUALITY_TIER_STAGES.length;i++){
-        if(stageIndex>=QUALITY_TIER_STAGES[i]) tier=i+1;
-      }
-    }
-    if(tier===qualityTier) return;
-    qualityTier=tier;
-    // Every glow blur radius in the stylesheet is calc()'d against this.
-    document.documentElement.style.setProperty('--glow-blur-scale', String(QUALITY_GLOW_SCALE[qualityTier]));
-    updateBombPulseQuality();
-  }
-
-  /* Mobile-only adaptive quality: thins a particle count at higher tiers.
-     Exact identity function on desktop (qualityTier is pinned to 0 there). */
-  function qualityParticles(n){
-    const f=QUALITY_PARTICLE_SCALE[qualityTier];
-    if(!(f<1)) return n;
-    return n>0 ? Math.max(1, Math.round(n*f)) : n;
-  }
-
-  /* Mobile-only adaptive quality: toggles the CSS class that stops the idle
-     bomb pulse. Cheap enough to call on every render -- on desktop and at low
-     tiers it never even scans the board. The count only has to be roughly
-     right, so an early exit at the threshold is plenty. */
-  function updateBombPulseQuality(){
-    let freeze=false;
-    if(qualityTier>=BOMB_FREEZE_MIN_TIER && grid){
-      let bombs=0;
-      for(let r=0;r<grid.length && !freeze;r++){
-        const row=grid[r];
-        for(let c=0;c<row.length;c++){
-          if(row[c] && row[c].type==='bomb' && ++bombs>=BOMB_FREEZE_MIN_BOMBS){ freeze=true; break; }
-        }
-      }
-    }
-    gridEl.classList.toggle('q-freeze-bombs', freeze);
-  }
+  let particles=[];              // {x,y,dx,dy,color,startTime,delay,duration}
+  let sparkLines=[];             // {x1,y1,x2,y2,color,delay,duration,startTime}
+  let floaters=[];               // {x,y,startTime,duration,points,tierLabel,tierColor,comboText}
+  let dragVisual=null;           // {originX,originY,endX,endY,strokeColor,puckR} or null
+  let rafId=null;
 
   /* ================= Audio ================= */
   function ensureAudio(){
@@ -1048,6 +643,10 @@
     tone({freq,dur:0.16,type:'triangle',gain:0.13,delay:depth*STEP_MS/1000,attack:0.004});
   }
 
+  function playBombFizzle(){
+    tone({freq:520,freqEnd:180,dur:0.14,type:'triangle',gain:0.14,delay:0});
+  }
+
   function playBombBoom(delay, radius){
     const scale=1+((radius||1)-1)*0.35;
     noiseBurst({dur:0.3*scale, gain:Math.min(0.26*scale,0.42), delay, filterFreq:1100/scale});
@@ -1075,6 +674,10 @@
 
   function playUIClick(){
     tone({freq:520,dur:0.06,type:'square',gain:0.07,delay:0});
+  }
+
+  function playDragTick(){
+    tone({freq:700,dur:0.03,type:'sine',gain:0.03,delay:0});
   }
 
   function playTierSound(tier){
@@ -1143,97 +746,39 @@
     return {type:'normal', color:randColor()};
   }
 
-  function buildCells(){
-    gridEl.innerHTML='';
-    cellButtons=[];
-    for(let r=0;r<ROWS+1;r++){
-      const row=[];
-      for(let c=0;c<COLS;c++){
-        const btn=document.createElement('button');
-        btn.type='button';
-        btn.className='cell empty'+(r===0?' buffer-row':'');
-        btn.dataset.r=r;
-        btn.dataset.c=c;
-        btn.setAttribute('aria-label','empty cell');
-        gridEl.appendChild(btn);
-        row.push(btn);
-      }
-      cellButtons.push(row);
-    }
-  }
-
-  function renderGrid(dropSet, cellsOnly){
-    dropSet = dropSet || new Set();
-    let maxHeight=0;
-    for(let c=0;c<COLS;c++) maxHeight=Math.max(maxHeight, colHeight(c));
-    dangerGlow.classList.toggle('active', maxHeight>=ROWS);
-
-    if(cellsOnly){
-      // Only touch the handful of cells that actually changed (e.g. a spawn
-      // wave) instead of rewriting every cell on the board every time.
-      dropSet.forEach(key=>{
-        const [r,c]=key.split('_').map(Number);
-        renderSingleCell(r,c,true);
-      });
-    } else {
-      for(let r=0;r<ROWS+1;r++){
-        for(let c=0;c<COLS;c++){
-          renderSingleCell(r,c, dropSet.has(r+'_'+c));
-        }
-      }
-    }
-    updateBombPulseQuality(); // mobile-only adaptive quality (bomb count changed)
-    positionWarningLine();
-  }
-
-  function renderSingleCell(r,c,dropIn){
-    const cell=grid[r][c];
-    const btn=cellButtons[r] && cellButtons[r][c];
-    if(!btn) return;
-    btn.style.removeProperty('--pop-delay');
-    if(!cell){
-      btn.className='cell empty'+(r===0?' buffer-row':'');
-      btn.setAttribute('aria-label','empty cell');
-      return;
-    }
-    if(cell.type==='normal'){
-      btn.className='cell c-'+cell.color;
-      btn.setAttribute('aria-label', cell.color+' orb');
-    } else if(cell.type==='prism'){
-      btn.className='cell type-prism';
-      btn.setAttribute('aria-label','prism orb');
-    } else {
-      const rad=cell.radius||1;
-      const bombCls = rad>=3?'type-bomb-mega':rad>=2?'type-bomb-big':'type-bomb';
-      const bombLabel = rad>=3?'mega blast orb':rad>=2?'big blast orb':'blast orb';
-      btn.className='cell '+bombCls;
-      btn.setAttribute('aria-label',bombLabel);
-    }
-    if(r===0) btn.classList.add('buffer-row');
-    if(dropIn) btn.classList.add('drop-in');
-  }
-
-  function positionWarningLine(){
-    const {ch}=cellMetrics();
-    warningLine.style.top=ch+'px';
-  }
-
-  /* getBoundingClientRect() forces a synchronous layout flush, far too expensive
-     to run on every pointermove. The grid's geometry only changes on window
-     resize or growGrid(), so cache it and invalidate explicitly. We also
-     invalidate on pointerdown, which makes the read happen exactly once per
-     gesture and keeps the cache honest if some other layout shift slipped past.
-     Do not "simplify" this back into an unconditional rect read. */
-  let metricsCache=null;
-  function invalidateCellMetrics(){ metricsCache=null; }
+  /* ================= Canvas sizing ================= */
   function cellMetrics(){
-    if(metricsCache) return metricsCache;
-    const rect=gridEl.getBoundingClientRect();
-    const m={cw:rect.width/COLS, ch:rect.height/(ROWS+1), rect};
-    if(rect.width) metricsCache=m; // never cache a pre-layout zero-size rect
-    return m;
+    const rect=canvas.getBoundingClientRect();
+    return {cw:rect.width/COLS, ch:rect.height/(ROWS+1), rect};
   }
 
+  function resizeCanvas(){
+    const rect=gridWrap.getBoundingClientRect();
+    const pad=parseFloat(getComputedStyle(gridWrap).paddingLeft)||8;
+    const w=Math.max(1, rect.width-pad*2);
+    const h=Math.max(1, rect.height-pad*2);
+    dpr=Math.max(1, Math.min(3, window.devicePixelRatio||1));
+    canvas.style.width=w+'px';
+    canvas.style.height=h+'px';
+    canvas.width=Math.round(w*dpr);
+    canvas.height=Math.round(h*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+
+  let resizeQueued=false;
+  function queueResize(){
+    if(resizeQueued) return;
+    resizeQueued=true;
+    requestAnimationFrame(()=>{ resizeQueued=false; resizeCanvas(); });
+  }
+  if(window.ResizeObserver){
+    new ResizeObserver(queueResize).observe(gridWrap);
+  } else {
+    window.addEventListener('resize', queueResize);
+  }
+
+  /* ================= Neighbours / flood fill / bomb & prism chains =================
+     (Pure grid-state logic — identical to the DOM version, no rendering here.) */
   function neighbors(r,c){
     const out=[];
     if(r>0) out.push([r-1,c]);
@@ -1249,14 +794,9 @@
     const group=[];
     const edges=[];
     const depths={};
-    // Index-pointer dequeue: Array.shift() is O(n) (it re-indexes the whole
-    // remaining array), so shifting a BFS queue makes the search O(n^2).
-    // Walking a `head` index is O(1) per dequeue and visits cells in
-    // exactly the same order.
     const queue=[[startR,startC,0,null]];
-    let head=0;
-    while(head<queue.length){
-      const [r,c,d,parent]=queue[head++];
+    while(queue.length){
+      const [r,c,d,parent]=queue.shift();
       group.push([r,c]);
       depths[key(r,c)]=d;
       if(parent) edges.push({from:parent, to:[r,c], depth:d-1});
@@ -1277,12 +817,9 @@
     const visitedCells=new Set();
     const visitedPrismTriggers=new Set();
     const group=[], edges=[], depths={}, centers=[], triggeredChains=[];
-    // Index-pointer dequeue (see floodFill): shift() is O(n) per call, which
-    // would make a long bomb/prism cascade O(n^2). Order is unchanged.
     const queue=[[r,c,0,null]];
-    let head=0;
-    while(head<queue.length){
-      const [cr,cc,cd]=queue[head++];
+    while(queue.length){
+      const [cr,cc,cd]=queue.shift();
       centers.push(cd);
       const centerCell=grid[cr][cc];
       const rad=(centerCell && centerCell.radius) || 1;
@@ -1327,9 +864,6 @@
                 } else if(shiftedDepth<depths[gkey]){
                   depths[gkey]=shiftedDepth;
                 }
-                // A chain never literally contains a bomb cell (bombs
-                // aren't colour-matchable), so cascading into a bomb the
-                // chain "reaches" means checking cells adjacent to it.
                 neighbors(gr,gc).forEach(([abr,abc])=>{
                   const adjKey=abr+'_'+abc;
                   const adjCell=grid[abr][abc];
@@ -1352,26 +886,12 @@
     return {group,edges,depths,centers,triggeredChains};
   }
 
-  /* Finds the best chain a prism (or a connected cluster of prisms) can
-     trigger: every colour touching the cluster is tried as a candidate,
-     the longest resulting chain wins. Ties go to the colour with more
-     cells directly touching the cluster, then to whichever colour was
-     encountered first scanning up/down/left/right outward from the
-     start, through any connected prisms. */
   function enumeratePrismCandidates(startR,startC){
-    // Find the full connected-prism cluster first, then always scan from a
-    // fixed anchor (topmost, then leftmost, cell in the cluster) so the
-    // result is identical no matter which prism in the cluster triggered
-    // the search — otherwise a bomb could pick a different tie-break
-    // winner depending on which side of the same cluster it happened to hit.
     const clusterVisited=new Set([startR+'_'+startC]);
     const clusterQueue=[[startR,startC]];
     const clusterCells=[[startR,startC]];
-    // Index-pointer dequeue (see floodFill): shift() is O(n) per call, so a
-    // large connected prism cluster would cost O(n^2) to walk.
-    let clusterHead=0;
-    while(clusterHead<clusterQueue.length){
-      const [pr,pc]=clusterQueue[clusterHead++];
+    while(clusterQueue.length){
+      const [pr,pc]=clusterQueue.shift();
       neighbors(pr,pc).forEach(([nr,nc])=>{
         const n=grid[nr][nc];
         if(n && n.type==='prism'){
@@ -1392,11 +912,8 @@
     const touchCount={};
     const firstSeenOrder={};
     let scanIndex=0;
-    // Index-pointer dequeue (see floodFill): avoids the O(n) shift() per cell
-    // that turns this scan into O(n^2) on big clusters.
-    let head=0;
-    while(head<queue.length){
-      const [pr,pc]=queue[head++];
+    while(queue.length){
+      const [pr,pc]=queue.shift();
       neighbors(pr,pc).forEach(([nr,nc])=>{
         const n=grid[nr][nc];
         scanIndex++;
@@ -1442,13 +959,73 @@
     const r=landingRow(c);
     const rad=radius||1;
     grid[r][c] = type==='bomb' ? {type:'bomb', color:null, radius:rad} : {type, color:null};
-    renderSingleCell(r,c,true);
-    updateBombPulseQuality(); // mobile-only adaptive quality (a bomb may have spawned)
+    triggerDropIn(r,c);
     const {cw,ch}=cellMetrics();
-    let particleColor='var(--accent-violet)';
-    if(type==='bomb') particleColor = rad>=3?'var(--accent-lime)':rad>=2?'var(--accent-coral)':'var(--bomb-spark)';
+    let particleColor = type==='bomb' ? (rad>=3?PALETTE.lime:rad>=2?PALETTE.coral:PALETTE.bombSpark) : PALETTE.violet;
     const count=particleCount===undefined?8:particleCount;
-    if(count>0) spawnParticles(c*cw+cw/2, r*ch+ch/2, particleColor, count, 0);
+    if(count>0) addParticles(c*cw+cw/2, r*ch+ch/2, particleColor, count, 0);
+  }
+
+  /* ================= Render-effect helpers ================= */
+  function triggerPop(r,c,delayMs){
+    const key=r+'_'+c;
+    const cell=grid[r][c];
+    if(!cell) return;
+    popEffects.set(key,{startTime:performance.now(), delay:delayMs||0, duration:POP_MS, cell:{type:cell.type,color:cell.color,radius:cell.radius}});
+  }
+  function clearPopEffectsFor(cells){
+    cells.forEach(([r,c])=>popEffects.delete(r+'_'+c));
+  }
+  function triggerDropIn(r,c){
+    dropInEffects.set(r+'_'+c,{startTime:performance.now(), duration:320});
+  }
+  function triggerNudge(r,c){
+    nudgeEffects.set(r+'_'+c,{startTime:performance.now(), duration:180});
+  }
+  function shakeCell(r,c){ triggerNudge(r,c); }
+
+  function setArmed(r,c,on){
+    const key=r+'_'+c;
+    if(on){
+      if(armedKey===key) return;
+      armedKey=key; armedStartTime=performance.now();
+      playDragTick();
+    } else if(armedKey===key){
+      armedKey=null;
+    }
+  }
+  function clearArmed(){ armedKey=null; }
+
+  function setPreviewGroup(cells, className){
+    previewKeys=new Set(cells.map(([r,c])=>r+'_'+c));
+    previewClassUsed=className;
+  }
+  function clearPreviewGroup(){
+    previewKeys=new Set();
+    previewClassUsed=null;
+  }
+
+  function addParticles(x,y,color,count,delay){
+    const now=performance.now();
+    for(let i=0;i<count;i++){
+      const angle=Math.random()*Math.PI*2;
+      const dist=24+Math.random()*34;
+      particles.push({
+        x,y, dx:Math.cos(angle)*dist, dy:Math.sin(angle)*dist,
+        color, startTime:now, delay:delay||0, duration:560
+      });
+    }
+  }
+  // kept name for drop-in parity with original call sites
+  const spawnParticles=addParticles;
+
+  function addSparkLine(x1,y1,x2,y2,color,delayMs){
+    sparkLines.push({x1,y1,x2,y2,color, delay:delayMs||0, duration:320, startTime:performance.now()});
+  }
+
+  function addFloater(x,y,points,tierLabel,tierColor,comboText){
+    const duration=tierLabel?1200:950;
+    floaters.push({x,y,startTime:performance.now(),duration,points,tierLabel,tierColor,comboText});
   }
 
   /* ================= Input: tap vs drag ================= */
@@ -1457,17 +1034,19 @@
     return dy>=0 ? {dr:1,dc:0} : {dr:-1,dc:0};
   }
 
-  function shakeCell(r,c){
-    const btn=cellButtons[r][c];
-    btn.classList.remove('nudge');
-    void btn.offsetWidth;
-    btn.classList.add('nudge');
+  function cellFromPoint(clientX,clientY){
+    const {cw,ch,rect}=cellMetrics();
+    const x=clientX-rect.left, y=clientY-rect.top;
+    if(x<0||y<0||x>=rect.width||y>=rect.height) return null;
+    const c=Math.floor(x/cw), r=Math.floor(y/ch);
+    if(r<0||r>ROWS||c<0||c>=COLS) return null;
+    return {r,c};
   }
 
   function handleTap(r,c){
     const cell=grid[r] && grid[r][c];
     if(!cell) return;
-    if(cell.type==='bomb'){ resolveBomb(r,c); return; }
+    if(cell.type==='bomb'){ resolveBombTap(r,c); return; }
     if(cell.type==='prism'){ resolvePrismTap(r,c); return; }
     const {group,edges,depths}=floodFill(r,c,cell.color);
     if(group.length<2) shakeCell(r,c);
@@ -1477,52 +1056,11 @@
   function handleDrag(r,c,dx,dy){
     const cell=grid[r] && grid[r][c];
     if(!cell) return;
-    if(cell.type==='bomb'){ resolveBomb(r,c); return; }
+    if(cell.type==='bomb'){ resolveBombDrag(r,c); return; }
     if(cell.type==='prism'){ resolvePrismDrag(r,c, primaryDirection(dx,dy)); return; }
     const {group,edges,depths}=floodFill(r,c,cell.color);
     if(group.length<2) shakeCell(r,c);
     else resolveGroup(group,edges,depths,'chain',r,c);
-  }
-
-  /* ---------- whole-group preview highlight ---------- */
-  function setPreviewGroup(cells, className){
-    const newKeys=new Set(cells.map(([r,c])=>r+'_'+c));
-    previewKeys.forEach(key=>{
-      if(!newKeys.has(key) || className!==previewClassUsed){
-        const [rr,cc]=key.split('_').map(Number);
-        const btn=cellButtons[rr] && cellButtons[rr][cc];
-        if(btn){ btn.classList.remove('preview'); btn.classList.remove('preview-blast'); }
-      }
-    });
-    newKeys.forEach(key=>{
-      const [rr,cc]=key.split('_').map(Number);
-      const btn=cellButtons[rr] && cellButtons[rr][cc];
-      if(btn) btn.classList.add(className);
-    });
-    previewKeys=newKeys;
-    previewClassUsed=className;
-  }
-  function clearPreviewGroup(){
-    previewKeys.forEach(key=>{
-      const [rr,cc]=key.split('_').map(Number);
-      const btn=cellButtons[rr] && cellButtons[rr][cc];
-      if(btn){ btn.classList.remove('preview'); btn.classList.remove('preview-blast'); }
-    });
-    previewKeys=new Set();
-    previewClassUsed=null;
-  }
-
-  /* Per-gesture memo for the costly preview computations.
-     pointermove fires far more often than the *result* of those computations can
-     actually change: a bomb's blast is always centred on its own cell (exactly
-     one possible group for the whole press) and a prism only ever aims at one of
-     four neighbours via primaryDirection(). Re-running computeBombChain() /
-     floodFill() per pixel is pure waste, so we recompute only when the inputs
-     that matter change. Do not collapse this back into an unconditional
-     recompute -- on a grown board with a high-polling-rate pointer it stutters. */
-  let gesturePreview={ bombGroup:null, phase:-1, dirKey:null };
-  function resetGesturePreview(){
-    gesturePreview={ bombGroup:null, phase:-1, dirKey:null };
   }
 
   function updatePreview(r,c,dx,dy){
@@ -1531,30 +1069,18 @@
     const dist=Math.hypot(dx,dy);
 
     if(cellVal.type==='bomb'){
-      // The blast is centred on the bomb regardless of drag distance/direction,
-      // so the group is computed once (on pointerdown) and shown statically for
-      // the rest of the press. No recompute on move.
-      if(!gesturePreview.bombGroup){
-        gesturePreview.bombGroup=computeBombChain(r,c).group;
-        setPreviewGroup(gesturePreview.bombGroup,'preview-blast');
+      if(dist>=DRAG_THRESHOLD){
+        const {group}=computeBombChain(r,c);
+        setPreviewGroup(group,'preview-blast');
+      } else {
+        setPreviewGroup([[r,c]],'preview-blast');
       }
       return;
     }
 
     if(cellVal.type==='prism'){
-      // The only inputs to the group below are (a) which threshold band the drag
-      // is in -- no preview / free-follow / snapped -- and (b) which of the four
-      // neighbours we aim at. Both change a handful of times per gesture at most,
-      // so skip the floodFill/bestPrismChain rebuild when neither moved. The drag
-      // line/puck still updates every frame, so visual tracking stays smooth.
-      const phase = dist>=DRAG_THRESHOLD ? 2 : dist>=DRAG_SHOW_THRESHOLD ? 1 : 0;
-      const dir = phase>0 ? primaryDirection(dx,dy) : null;
-      const dirKey = dir ? dir.dr+','+dir.dc : 'none';
-      if(phase===gesturePreview.phase && dirKey===gesturePreview.dirKey) return;
-      gesturePreview.phase=phase;
-      gesturePreview.dirKey=dirKey;
-
-      if(dir){
+      if(dist>=DRAG_SHOW_THRESHOLD){
+        const dir=primaryDirection(dx,dy);
         const nr=r+dir.dr, nc=c+dir.dc;
         let targetColor=null;
         if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS){
@@ -1578,13 +1104,8 @@
     setPreviewGroup(group,'preview');
   }
 
-  /* ---------- live drag line/puck ---------- */
-  function showDragVisual(r,c,dx,dy,cellVal){
-    const {cw,ch,rect}=cellMetrics();
-    dragSvg.setAttribute('width', rect.width);
-    dragSvg.setAttribute('height', rect.height);
-    dragSvg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
-
+  function computeDragVisual(r,c,dx,dy,cellVal){
+    const {cw,ch}=cellMetrics();
     const originX=c*cw+cw/2, originY=r*ch+ch/2;
     const dist=Math.hypot(dx,dy);
     const maxReach=Math.min(cw,ch)*1.25;
@@ -1595,13 +1116,17 @@
       return {x:originX+Math.cos(angle)*clamped, y:originY+Math.sin(angle)*clamped};
     };
 
-    if(cellVal.type==='prism'){
+    if(cellVal.type==='bomb'){
+      strokeColor=PALETTE.bombSpark;
+      const p=freeFollow(); endX=p.x; endY=p.y;
+      setArmed(r,c, dist>=DRAG_THRESHOLD);
+    } else if(cellVal.type==='prism'){
       const dir=primaryDirection(dx,dy);
       const nr=r+dir.dr, nc=c+dir.dc;
       let targetColor=null;
       if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS){
         const nb=grid[nr][nc];
-        if(nb && nb.type==='normal') targetColor=`var(--accent-${nb.color})`;
+        if(nb && nb.type==='normal') targetColor=colorHexFor(nb.color);
       }
       strokeColor=targetColor||'rgba(237,239,245,.5)';
       if(dist>=DRAG_THRESHOLD){
@@ -1614,118 +1139,56 @@
       strokeColor='rgba(237,239,245,.4)';
       const p=freeFollow(); endX=p.x; endY=p.y;
     }
-
-    dragLine.setAttribute('x1',originX);
-    dragLine.setAttribute('y1',originY);
-    dragLine.setAttribute('x2',endX);
-    dragLine.setAttribute('y2',endY);
-    dragLine.style.stroke=strokeColor;
-    dragLine.style.color=strokeColor;
-    dragLine.classList.add('show');
-
-    dragPuck.setAttribute('cx',endX);
-    dragPuck.setAttribute('cy',endY);
-    dragPuck.setAttribute('r', Math.max(4,Math.min(cw,ch)*0.13));
-    dragPuck.style.fill=strokeColor;
-    dragPuck.style.color=strokeColor;
-    dragPuck.classList.add('show');
-  }
-
-  function hideDragVisual(){
-    dragLine.classList.remove('show');
-    dragPuck.classList.remove('show');
+    return {originX,originY,endX,endY,strokeColor,puckR:Math.max(4,Math.min(cw,ch)*0.13)};
   }
 
   function cancelPointerGesture(){
-    if(pointerStart){
-      const btn=cellButtons[pointerStart.r] && cellButtons[pointerStart.r][pointerStart.c];
-      if(btn) btn.classList.remove('grabbed');
-    }
+    grabbedKey=null;
     pointerStart=null;
-    cancelPendingMove();
-    hideDragVisual();
+    dragVisual=null;
+    clearArmed();
     clearPreviewGroup();
   }
 
-  gridEl.addEventListener('pointerdown', e=>{
+  canvas.addEventListener('pointerdown', e=>{
     if(!gameActive||isResolving||paused) return;
-    const cellEl=e.target.closest('.cell');
-    if(!cellEl || cellEl.classList.contains('empty')) return;
-    const r=+cellEl.dataset.r, c=+cellEl.dataset.c;
+    const hit=cellFromPoint(e.clientX,e.clientY);
+    if(!hit) return;
+    const {r,c}=hit;
+    if(!grid[r][c]) return;
+    e.preventDefault();
     pointerStart={ r, c, x:e.clientX, y:e.clientY };
-    // One layout read and one fresh preview memo for the whole gesture.
-    invalidateCellMetrics();
-    cellMetrics();
-    resetGesturePreview();
-    cellEl.classList.add('grabbed');
+    grabbedKey=r+'_'+c;
     updatePreview(r,c,0,0);
   });
 
-  /* Raw pointermove fires at the device polling rate (commonly 500-1000 Hz),
-     far faster than anything can usefully be redrawn. Coalesce into a single
-     update per animation frame so a quick flick costs ~60 updates/sec instead
-     of ~1000, keeping high-polling-rate pointers from stuttering the board. */
-  let pendingMove=null, moveRaf=0;
-
-  function processPendingMove(){
-    moveRaf=0;
-    const ev=pendingMove; pendingMove=null;
-    if(!ev || !pointerStart) return;
-    const {r,c,x,y}=pointerStart;
-    const cellVal=grid[r] && grid[r][c];
-    if(!cellVal){ hideDragVisual(); clearPreviewGroup(); return; }
-    const dx=ev.x-x, dy=ev.y-y;
-    updatePreview(r,c,dx,dy);
-    // Bombs detonate on their own cell however you press them, so there is
-    // nothing to aim: no drag line, just the static blast preview.
-    if(cellVal.type==='bomb'){ hideDragVisual(); return; }
-    if(Math.hypot(dx,dy)<DRAG_SHOW_THRESHOLD){ hideDragVisual(); return; }
-    showDragVisual(r,c,dx,dy,cellVal);
-  }
-
-  function cancelPendingMove(){
-    pendingMove=null;
-    if(moveRaf){ cancelAnimationFrame(moveRaf); moveRaf=0; }
-  }
-
   window.addEventListener('pointermove', e=>{
     if(!pointerStart) return;
-    pendingMove={ x:e.clientX, y:e.clientY };
-    if(!moveRaf) moveRaf=requestAnimationFrame(processPendingMove);
+    const {r,c,x,y}=pointerStart;
+    const cellVal=grid[r] && grid[r][c];
+    if(!cellVal){ dragVisual=null; clearPreviewGroup(); return; }
+    const dx=e.clientX-x, dy=e.clientY-y;
+    updatePreview(r,c,dx,dy);
+    if(Math.hypot(dx,dy)<DRAG_SHOW_THRESHOLD){ dragVisual=null; return; }
+    dragVisual=computeDragVisual(r,c,dx,dy,cellVal);
   });
 
   window.addEventListener('pointerup', e=>{
     if(!pointerStart) return;
     const {r,c,x,y}=pointerStart;
     pointerStart=null;
-    cancelPendingMove();
-    const grabbedBtn=cellButtons[r] && cellButtons[r][c];
-    if(grabbedBtn) grabbedBtn.classList.remove('grabbed');
-    hideDragVisual();
+    grabbedKey=null;
+    dragVisual=null;
+    clearArmed();
     clearPreviewGroup();
     if(!gameActive||isResolving||paused) return;
     const dx=e.clientX-x, dy=e.clientY-y;
     const isDrag=Math.hypot(dx,dy)>=DRAG_THRESHOLD;
-    lastPointerHandled={ key:r+'_'+c, time:Date.now() };
     if(isDrag) handleDrag(r,c,dx,dy);
     else handleTap(r,c);
   });
 
   window.addEventListener('pointercancel', cancelPointerGesture);
-
-  // Cached grid geometry only goes stale when the viewport or the grid changes.
-  window.addEventListener('resize', invalidateCellMetrics);
-  window.addEventListener('orientationchange', invalidateCellMetrics);
-
-  gridEl.addEventListener('click', e=>{
-    const cellEl=e.target.closest('.cell');
-    if(!cellEl || cellEl.classList.contains('empty')) return;
-    if(!gameActive||isResolving||paused) return;
-    const r=+cellEl.dataset.r, c=+cellEl.dataset.c;
-    const key=r+'_'+c;
-    if(lastPointerHandled && lastPointerHandled.key===key && Date.now()-lastPointerHandled.time<400) return;
-    handleTap(r,c);
-  });
 
   /* ================= Prism ================= */
   function resolvePrismTap(r,c){
@@ -1745,12 +1208,16 @@
   }
 
   /* ================= Bomb ================= */
-  // Any press on a bomb -- tap, click or drag -- triggers the full blast. There
-  // is no tap-vs-drag distinction and no weaker "fizzle" outcome any more.
-  function resolveBomb(r,c){
+  function resolveBombTap(r,c){
+    const group=[[r,c]];
+    const depths={[r+'_'+c]:0};
+    resolveGroup(group,[],depths,'bomb',r,c,{fizzle:true, centers:[0]});
+  }
+
+  function resolveBombDrag(r,c){
     const {group,edges,depths,centers,triggeredChains}=computeBombChain(r,c);
     const originRadius=(grid[r][c] && grid[r][c].radius) || 1;
-    resolveGroup(group,edges,depths,'bomb',r,c,{centers, radius:originRadius, triggeredChains});
+    resolveGroup(group,edges,depths,'bomb',r,c,{fizzle:false, centers, radius:originRadius, triggeredChains});
   }
 
   /* ================= Resolution ================= */
@@ -1763,7 +1230,7 @@
 
     const multiplier=Math.min(1+(combo-1)*0.4,3.5);
 
-    const tierColors={prism:'var(--accent-violet)', bomb:'var(--bomb-spark)', bigbomb:'var(--accent-coral)', megabomb:'var(--accent-lime)'};
+    const tierColors={prism:PALETTE.violet, bomb:PALETTE.bombSpark, bigbomb:PALETTE.coral, megabomb:PALETTE.lime};
     const tierFor=(len)=>{
       if(len>=8) return 'megabomb';
       if(len>=7) return 'bigbomb';
@@ -1773,7 +1240,7 @@
     };
 
     let base;
-    const tierEvents=[]; // [{tier, atR, atC}]
+    const tierEvents=[];
     if(kind==='bomb'){
       const triggeredChains=(extra && extra.triggeredChains) || [];
       const triggeredCellKeys=new Set();
@@ -1801,86 +1268,58 @@
     comboLabel.textContent = combo>1 ? `CHAIN ×${combo}` : '';
     comboFill.style.transition='none';
     comboFill.style.width='100%';
-    dbgSecStart('resolveGroup:forcedReflow');   /* DBG (temporary overlay) */
     void comboFill.offsetWidth;
-    dbgSecEnd('resolveGroup:forcedReflow');     /* DBG */
     comboFill.style.transition=`width ${currentComboWindow}ms linear`;
     comboFill.style.width='0%';
     if(combo>1) playComboChime(combo);
 
-    /* DBG: usually a cache hit; the miss is a real synchronous layout flush. */
-    dbgSecStart('resolveGroup:forcedReflow');   /* DBG */
-    const {cw,ch,rect}=cellMetrics();
-    dbgSecEnd('resolveGroup:forcedReflow');     /* DBG */
-    sparkSvg.setAttribute('width', rect.width);
-    sparkSvg.setAttribute('height', rect.height);
-    sparkSvg.setAttribute('viewBox', `0 0 ${rect.width} ${rect.height}`);
-    sparkSvg.innerHTML='';
+    const {cw,ch}=cellMetrics();
 
     const colorFor=(r,c)=>{
       const cell=grid[r][c];
-      if(cell.type==='normal') return `var(--accent-${cell.color})`;
-      if(cell.type==='prism') return 'var(--accent-teal)';
+      if(!cell) return PALETTE.textPrimary;
+      if(cell.type==='normal') return colorHexFor(cell.color);
+      if(cell.type==='prism') return PALETTE.teal;
       const rad=cell.radius||1;
-      return rad>=3?'var(--accent-lime)':rad>=2?'var(--accent-coral)':'var(--bomb-spark)';
+      return rad>=3?PALETTE.lime:rad>=2?PALETTE.coral:PALETTE.bombSpark;
     };
 
     let maxDepth=0;
-    const MAX_LINES=QUALITY_MAX_LINES[qualityTier];
+    const MAX_LINES=40;
     let lineCount=0;
     edges.forEach(edge=>{
       maxDepth=Math.max(maxDepth, edge.depth+1);
-      if(lineCount>=MAX_LINES) return; // cap DOM cost on huge blasts/chains
+      if(lineCount>=MAX_LINES) return;
       lineCount++;
       const [fr,fc]=edge.from, [tr,tc]=edge.to;
-      const line=document.createElementNS('http://www.w3.org/2000/svg','line');
-      line.setAttribute('x1', fc*cw+cw/2);
-      line.setAttribute('y1', fr*ch+ch/2);
-      line.setAttribute('x2', tc*cw+cw/2);
-      line.setAttribute('y2', tr*ch+ch/2);
-      line.setAttribute('pathLength','1');
-      line.classList.add('spark-line');
-      line.style.setProperty('--delay', (edge.depth*STEP_MS)+'ms');
-      line.style.setProperty('--dur','320ms');
-      line.style.stroke=colorFor(tr,tc);
-      line.style.color=colorFor(tr,tc);
-      sparkSvg.appendChild(line);
+      addSparkLine(fc*cw+cw/2, fr*ch+ch/2, tc*cw+cw/2, tr*ch+ch/2, colorFor(tr,tc), edge.depth*STEP_MS);
     });
 
-    /* Mobile-only adaptive quality: qualityParticles() is the identity on
-       desktop (qualityTier 0) and thins bursts out at higher mobile tiers.
-       MAX_PARTICLES stays a hard ceiling on every device regardless, and drops
-       further at mobile tier 2 so a big cascade cannot put an unbounded number
-       of elements on screen animating simultaneously. */
-    const particleBudget = qualityParticles(group.length>18?2:group.length>10?3:5);
-    const MAX_PARTICLES=QUALITY_MAX_PARTICLES[qualityTier];
+    const particleBudget = group.length>18?2:group.length>10?3:5;
+    const MAX_PARTICLES=56;
     let particlesSpawned=0;
     const spendParticles=(x,y,color,want,delay)=>{
       const budget=Math.min(want, Math.max(0,MAX_PARTICLES-particlesSpawned));
-      if(budget>0){ spawnParticles(x,y,color,budget,delay); particlesSpawned+=budget; }
+      if(budget>0){ addParticles(x,y,color,budget,delay); particlesSpawned+=budget; }
       return budget;
     };
 
     if(kind==='bomb'){
-      const centers=(extra && extra.centers) ? extra.centers : [0];
-      const bombRadius=(extra && extra.radius) || 1;
-      centers.forEach(d=> playBombBoom(d*STEP_MS/1000, bombRadius));
+      if(extra && extra.fizzle) playBombFizzle();
+      else{
+        const centers=(extra && extra.centers) ? extra.centers : [0];
+        const bombRadius=(extra && extra.radius) || 1;
+        centers.forEach(d=> playBombBoom(d*STEP_MS/1000, bombRadius));
+      }
     }
 
-    /* DBG: the per-cell DOM update loop. This window CONTAINS the nested
-       resolveGroup:particles measures (spendParticles runs inside it), so read
-       the two against each other in the log rather than adding them up. */
-    dbgSecStart('resolveGroup:domWrites');      /* DBG */
     group.forEach(([r,c])=>{
       const d=depths[r+'_'+c]||0;
       maxDepth=Math.max(maxDepth,d);
-      const btn=cellButtons[r][c];
-      btn.style.setProperty('--pop-delay',(d*STEP_MS)+'ms');
-      btn.classList.add('popping');
+      triggerPop(r,c,d*STEP_MS);
       spendParticles(c*cw+cw/2, r*ch+ch/2, colorFor(r,c), particleBudget, d*STEP_MS);
       if(kind!=='bomb') playPopTone(d);
     });
-    dbgSecEnd('resolveGroup:domWrites');        /* DBG */
 
     let mainTierColor=null, mainTierLabel=null;
     const MAX_TIER_FLOATERS=6;
@@ -1888,10 +1327,9 @@
     tierEvents.forEach(ev=>{
       const tColor=tierColors[ev.tier];
       const tLabel=TIER_LABEL[ev.tier];
-      // mobile-only adaptive quality: lighter tier-gift burst at higher tiers
-      spendParticles(ev.atC*cw+cw/2, ev.atR*ch+ch/2, tColor, qualityParticles(TIER_BURST[ev.tier]), 0);
+      spendParticles(ev.atC*cw+cw/2, ev.atR*ch+ch/2, tColor, TIER_BURST[ev.tier], 0);
       playTierSound(ev.tier);
-      const giftParticles=Math.min(qualityParticles(8), Math.max(0,MAX_PARTICLES-particlesSpawned));
+      const giftParticles=Math.min(8, Math.max(0,MAX_PARTICLES-particlesSpawned));
       if(ev.tier==='prism'){ spawnBonusOrb('prism', undefined, giftParticles); particlesSpawned+=giftParticles; }
       else if(TIER_RADIUS[ev.tier]){ spawnBonusOrb('bomb', TIER_RADIUS[ev.tier], giftParticles); particlesSpawned+=giftParticles; }
 
@@ -1899,38 +1337,20 @@
         mainTierColor=tColor; mainTierLabel=tLabel;
       } else if(tierFloatersShown<MAX_TIER_FLOATERS){
         tierFloatersShown++;
-        const tierFloater=document.createElement('div');
-        tierFloater.className='floater';
-        tierFloater.style.left=(ev.atC*cw+cw/2)+'px';
-        tierFloater.style.top=(ev.atR*ch+ch/2)+'px';
-        tierFloater.innerHTML=`<span class="ftier" style="color:${tColor}">${tLabel}</span>`;
-        floatersLayer.appendChild(tierFloater);
-        setTimeout(()=>tierFloater.remove(),1200);
+        addFloater(ev.atC*cw+cw/2, ev.atR*ch+ch/2, null, tLabel, tColor, null);
       }
     });
 
-    const floater=document.createElement('div');
-    floater.className='floater';
-    floater.style.left=(clickC*cw+cw/2)+'px';
-    floater.style.top=(clickR*ch+ch/2)+'px';
-    floater.innerHTML=`<span class="fpts">+${points}</span>`
-      +(mainTierLabel?`<span class="ftier" style="color:${mainTierColor}">${mainTierLabel}</span>`:'')
-      +(combo>1?`<span class="fcombo">CHAIN ×${combo}</span>`:'');
-    floatersLayer.appendChild(floater);
-    setTimeout(()=>floater.remove(), mainTierLabel?1200:950);
+    addFloater(clickC*cw+cw/2, clickR*ch+ch/2, points, mainTierLabel, mainTierColor, combo>1?`CHAIN ×${combo}`:null);
 
     if(kind==='bomb'){
       const bombRadius=(extra && extra.radius) || 1;
       stage.classList.remove('shake','shake-big');
-      dbgSecStart('resolveGroup:forcedReflow'); /* DBG */
       void stage.offsetWidth;
-      dbgSecEnd('resolveGroup:forcedReflow');   /* DBG */
       stage.classList.add(bombRadius>=2?'shake-big':'shake');
     } else if(group.length>=6){
       stage.classList.remove('shake');
-      dbgSecStart('resolveGroup:forcedReflow'); /* DBG */
       void stage.offsetWidth;
-      dbgSecEnd('resolveGroup:forcedReflow');   /* DBG */
       stage.classList.add('shake');
     }
 
@@ -1938,49 +1358,18 @@
     setTimeout(()=>finalizeClear(group), totalDuration);
   }
 
-  function spawnParticles(x,y,color,count,delay){
-    /* DBG: named for resolveGroup because every caller (directly, or via
-       spawnBonusOrb) sits inside a cascade resolve. */
-    dbgSecStart('resolveGroup:particles');      /* DBG */
-    for(let i=0;i<count;i++){
-      const p=document.createElement('div');
-      p.className='particle';
-      const angle=Math.random()*Math.PI*2;
-      const dist=24+Math.random()*34;
-      p.style.setProperty('--x', x+'px');
-      p.style.setProperty('--y', y+'px');
-      p.style.setProperty('--dx', Math.cos(angle)*dist+'px');
-      p.style.setProperty('--dy', Math.sin(angle)*dist+'px');
-      p.style.setProperty('--delay', delay+'ms');
-      p.style.setProperty('--pc', color);
-      particlesLayer.appendChild(p);
-      setTimeout(()=>p.remove(), delay+650);
-    }
-    dbgSecEnd('resolveGroup:particles');        /* DBG */
-  }
-
   function finalizeClear(group){
-    sparkSvg.innerHTML='';
     const affectedCols=new Set();
     group.forEach(([r,c])=>{ grid[r][c]=null; affectedCols.add(c); });
-    dbgSecStart('finalizeClear:rerender');      /* DBG */
+    clearPopEffectsFor(group);
     affectedCols.forEach(c=>{
       const stack=[];
       for(let r=ROWS;r>=0;r--){ if(grid[r][c]) stack.push(grid[r][c]); }
       for(let r=ROWS;r>=0;r--){ grid[r][c]= stack.length ? stack.shift() : null; }
     });
-    // Gravity only ever changes cells in the columns that lost something —
-    // untouched columns don't need to be re-rendered at all, which matters
-    // a lot once the board has grown large.
     let maxHeight=0;
     for(let c=0;c<COLS;c++) maxHeight=Math.max(maxHeight, colHeight(c));
     dangerGlow.classList.toggle('active', maxHeight>=ROWS);
-    affectedCols.forEach(c=>{
-      for(let r=0;r<ROWS+1;r++) renderSingleCell(r,c,false);
-    });
-    dbgSecEnd('finalizeClear:rerender');        /* DBG */
-    updateBombPulseQuality(); // mobile-only adaptive quality (bombs may have popped/spawned)
-    positionWarningLine();
     isResolving=false;
     checkGrowth();
   }
@@ -2003,13 +1392,8 @@
       }
     }
     grid=next;
-    updateQualityTier(); // mobile-only adaptive quality: stageIndex just grew
-    gridEl.style.setProperty('--cols',COLS);
-    gridEl.style.setProperty('--rows',ROWS+1);
     gridWrap.style.aspectRatio=COLS+'/'+(ROWS+1);
-    invalidateCellMetrics(); // grid changed size: cached rect/cw/ch are stale
-    buildCells();
-    renderGrid();
+    resizeCanvas();
     flashExpand();
     playExpand();
   }
@@ -2028,7 +1412,6 @@
     const batchSize=Math.min(2+Math.floor(elapsed/35)+stageIndex,8);
     const bombChance=BOMB_CHANCE_RANGE[0]+Math.random()*(BOMB_CHANCE_RANGE[1]-BOMB_CHANCE_RANGE[0]);
     const prismChance=PRISM_CHANCE_RANGE[0]+Math.random()*(PRISM_CHANCE_RANGE[1]-PRISM_CHANCE_RANGE[0]);
-    const dropSet=new Set();
     let placed=0, guard=0;
     while(placed<batchSize && guard<60){
       guard++;
@@ -2036,10 +1419,9 @@
       const r=landingRow(c);
       if(r<0) continue;
       grid[r][c]=makeOrb(bombChance,prismChance);
-      dropSet.add(r+'_'+c);
+      triggerDropIn(r,c);
       placed++;
     }
-    renderGrid(dropSet, true);
     playSpawnTick();
 
     let anyRoom=false;
@@ -2119,7 +1501,6 @@
         if(typeof data.bestScore==='number'){
           bestScore=data.bestScore;
         } else if(data.bestScores){
-          // migrate from the old per-difficulty save format
           bestScore=Math.max(data.bestScores.easy||0, data.bestScores.medium||0, data.bestScores.hard||0);
         } else if(typeof data.highScore==='number'){
           bestScore=data.highScore;
@@ -2140,15 +1521,14 @@
   /* ================= Game flow ================= */
   function startGame(){
     COLS=BASE_COLS; ROWS=BASE_ROWS; stageIndex=0;
-    updateQualityTier(); // mobile-only adaptive quality: stageIndex reset to 0
-    gridEl.style.setProperty('--cols',COLS);
-    gridEl.style.setProperty('--rows',ROWS+1);
     gridWrap.style.aspectRatio=COLS+'/'+(ROWS+1);
-    invalidateCellMetrics(); // grid changed size: cached rect/cw/ch are stale
-    buildCells();
+    resizeCanvas();
 
     grid=newGrid();
     score=0; combo=0; lastPopTime=0; currentComboWindow=comboWindowFor(1); isResolving=false; paused=false;
+    popEffects.clear(); dropInEffects.clear(); nudgeEffects.clear();
+    particles=[]; sparkLines=[]; floaters=[]; dragVisual=null;
+    armedKey=null; grabbedKey=null; clearPreviewGroup();
     scoreVal.textContent='000000';
     comboLabel.textContent='';
     comboFill.style.transition='none';
@@ -2169,7 +1549,7 @@
       const r=landingRow(c);
       if(r>=0) grid[r][c]=makeOrb(seedBomb,seedPrism);
     }
-    renderGrid();
+    dangerGlow.classList.remove('active');
     scheduleSpawn();
   }
 
@@ -2186,9 +1566,301 @@
     overOverlay.classList.remove('hidden');
   }
 
-  buildCells();
-  loadPrefs();
-  updatePauseVisibility();
+  /* ================= Canvas render loop =================
+     Everything here is pure drawing — it never mutates game state.
+     A full clear+redraw every frame is cheap on canvas (unlike DOM
+     layout), so there's no need for the old "only touch changed
+     cells" bookkeeping. */
+  function easeOutBack(t){
+    const c1=1.70158, c3=c1+1;
+    return 1+c3*Math.pow(t-1,3)+c1*Math.pow(t-1,2);
+  }
+  function easeOutCubic(t){ return 1-Math.pow(1-t,3); }
+
+  function drawOrb(cell, cx, cy, radius, now){
+    ctx.save();
+    if(cell.type==='normal'){
+      const hex=colorHexFor(cell.color);
+      const light=mixWithWhite(hex,0.5);
+      const grad=ctx.createRadialGradient(cx-radius*0.34,cy-radius*0.46,radius*0.05,cx,cy,radius*1.05);
+      grad.addColorStop(0,light);
+      grad.addColorStop(0.66,hex);
+      grad.addColorStop(1,hex);
+      ctx.shadowColor=rgba(hex,0.55); ctx.shadowBlur=9;
+      ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.fillStyle=grad; ctx.fill();
+      ctx.shadowBlur=0;
+      ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.clip();
+      const shade=ctx.createLinearGradient(cx,cy-radius*0.2,cx,cy+radius);
+      shade.addColorStop(0.55,'rgba(0,0,0,0)');
+      shade.addColorStop(1,'rgba(0,0,0,0.3)');
+      ctx.fillStyle=shade; ctx.fillRect(cx-radius,cy-radius,radius*2,radius*2);
+    } else if(cell.type==='prism'){
+      ctx.shadowColor='rgba(255,255,255,.55)'; ctx.shadowBlur=10;
+      ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2);
+      if(SUPPORTS_CONIC){
+        const grad=ctx.createConicGradient(0,cx,cy);
+        grad.addColorStop(0,PALETTE.coral);
+        grad.addColorStop(0.2,PALETTE.amber);
+        grad.addColorStop(0.4,PALETTE.lime);
+        grad.addColorStop(0.6,PALETTE.teal);
+        grad.addColorStop(0.8,PALETTE.violet);
+        grad.addColorStop(1,PALETTE.coral);
+        ctx.fillStyle=grad;
+      } else {
+        const grad=ctx.createRadialGradient(cx,cy,0,cx,cy,radius);
+        grad.addColorStop(0,'#ffffff');
+        grad.addColorStop(1,PALETTE.violet);
+        ctx.fillStyle=grad;
+      }
+      ctx.fill();
+      ctx.shadowBlur=0;
+    } else {
+      const rad=cell.radius||1;
+      const core=rad>=3?'#3b2f52':rad>=2?'#4a3550':'#3b4258';
+      const glow=rad>=3?PALETTE.violet:rad>=2?PALETTE.coral:PALETTE.bombSpark;
+      const grad=ctx.createRadialGradient(cx-radius*0.32,cy-radius*0.44,radius*0.05,cx,cy,radius*1.05);
+      grad.addColorStop(0,core);
+      grad.addColorStop(0.72,PALETTE.bombCore);
+      ctx.shadowColor=rgba(glow,0.6); ctx.shadowBlur=11;
+      ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.fillStyle=grad; ctx.fill();
+      ctx.shadowBlur=0;
+      // pulsing spark glyph
+      const periodMs = rad>=3?700:rad>=2?900:1100;
+      const phase=(now%periodMs)/periodMs;
+      const wave=Math.sin(phase*Math.PI*2);
+      const glyphScale=0.88+0.24*Math.max(0,wave);
+      const glyphAlpha=0.6+0.4*Math.max(0,wave);
+      ctx.globalAlpha=glyphAlpha;
+      ctx.fillStyle=rad>=3?'#ffffff':glow;
+      ctx.font=`${Math.round(radius*1.15*glyphScale)}px sans-serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(rad>=2?'✹':'✺', cx, cy+radius*0.03);
+      ctx.globalAlpha=1;
+    }
+    ctx.restore();
+  }
+
+  function drawRing(cx,cy,radius,color,lineWidth,glow){
+    ctx.save();
+    ctx.lineWidth=lineWidth;
+    ctx.strokeStyle=color;
+    if(glow){ ctx.shadowColor=color; ctx.shadowBlur=glow; }
+    ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawGrid(now){
+    const {cw,ch}=cellMetrics();
+    const baseRadius=Math.min(cw,ch)/2*0.92;
+
+    for(let r=0;r<ROWS+1;r++){
+      for(let c=0;c<COLS;c++){
+        const key=r+'_'+c;
+        const cx=c*cw+cw/2, cy=r*ch+ch/2;
+
+        // buffer-row faint tint (row 0)
+        if(r===0){
+          ctx.fillStyle='rgba(255,59,78,0.05)';
+          ctx.fillRect(c*cw,r*ch,cw,ch);
+        }
+
+        const pop=popEffects.get(key);
+        if(pop){
+          const elapsed=now-pop.startTime-pop.delay;
+          if(elapsed<0){
+            // still within its stagger delay — looks like a normal orb until its own pop starts
+            drawOrb(pop.cell, cx, cy, baseRadius, now);
+            continue;
+          }
+          const t=Math.min(1,elapsed/pop.duration);
+          const scale = t<0.25 ? 1+0.32*(t/0.25) : 1.32-1.17*((t-0.25)/0.75);
+          const alpha = t<0.25 ? 1 : Math.max(0,1-((t-0.25)/0.75));
+          if(alpha>0){
+            ctx.save();
+            ctx.globalAlpha=alpha;
+            drawOrb(pop.cell, cx, cy, baseRadius*scale, now);
+            ctx.restore();
+          }
+          continue; // mid-pop or fully popped (invisible) — never fall through to normal draw
+        }
+
+        const cell=grid[r][c];
+        if(!cell) continue;
+
+        let scale=1, alpha=1, offsetY=0;
+
+        const dropIn=dropInEffects.get(key);
+        if(dropIn){
+          const t=Math.min(1,(now-dropIn.startTime)/dropIn.duration);
+          if(t>=1){ dropInEffects.delete(key); }
+          else{
+            const ease=easeOutBack(t);
+            offsetY=(1-ease)*-ch*1.4;
+            alpha=Math.min(1,t*3);
+          }
+        }
+
+        const nudge=nudgeEffects.get(key);
+        if(nudge){
+          const t=Math.min(1,(now-nudge.startTime)/nudge.duration);
+          if(t>=1) nudgeEffects.delete(key);
+          else scale*=1-0.16*Math.sin(t*Math.PI);
+        }
+
+        if(grabbedKey===key) scale*=0.92;
+
+        ctx.save();
+        ctx.globalAlpha=alpha;
+        drawOrb(cell, cx, cy+offsetY, baseRadius*scale, now);
+        ctx.restore();
+
+        if(armedKey===key){
+          const phase=((now-armedStartTime)%500)/500;
+          const pulse=1+0.1*Math.sin(phase*Math.PI*2);
+          drawRing(cx,cy+offsetY,(baseRadius+4)*pulse,PALETTE.danger,3,10);
+        } else if(previewKeys.has(key)){
+          const ringColor = previewClassUsed==='preview-blast' ? PALETTE.bombSpark : 'rgba(255,255,255,.95)';
+          drawRing(cx,cy+offsetY,baseRadius*1.08,ringColor,3,8);
+        }
+      }
+    }
+  }
+
+  function drawSparkLines(now){
+    const survivors=[];
+    ctx.save();
+    ctx.lineCap='round';
+    sparkLines.forEach(line=>{
+      const elapsed=now-line.startTime-line.delay;
+      if(elapsed<0){ survivors.push(line); return; }
+      const t=elapsed/line.duration;
+      if(t>1.0){ return; } // expired
+      const reveal=Math.min(1, t/0.6);
+      const alpha = t<0.6 ? 0.9 : Math.max(0,0.9*(1-((t-0.6)/0.4)));
+      if(alpha<=0){ return; }
+      const ex=line.x1+(line.x2-line.x1)*reveal;
+      const ey=line.y1+(line.y2-line.y1)*reveal;
+      ctx.globalAlpha=alpha;
+      ctx.strokeStyle=line.color;
+      ctx.lineWidth=3;
+      ctx.beginPath(); ctx.moveTo(line.x1,line.y1); ctx.lineTo(ex,ey); ctx.stroke();
+      survivors.push(line);
+    });
+    ctx.restore();
+    sparkLines=survivors;
+  }
+
+  function drawParticles(now){
+    const survivors=[];
+    ctx.save();
+    particles.forEach(p=>{
+      const elapsed=now-p.startTime-p.delay;
+      if(elapsed<0){ survivors.push(p); return; }
+      const t=elapsed/p.duration;
+      if(t>=1) return;
+      const ease=easeOutCubic(t);
+      const px=p.x+p.dx*ease, py=p.y+p.dy*ease;
+      const alpha = t<0.1 ? t/0.1 : 1-((t-0.1)/0.9);
+      const size=(1-0.8*t)*3;
+      ctx.globalAlpha=Math.max(0,alpha);
+      ctx.fillStyle=p.color;
+      ctx.shadowColor=p.color; ctx.shadowBlur=4;
+      ctx.beginPath(); ctx.arc(px,py,Math.max(0.5,size),0,Math.PI*2); ctx.fill();
+      survivors.push(p);
+    });
+    ctx.restore();
+    particles=survivors;
+  }
+
+  function drawFloaters(now){
+    const survivors=[];
+    ctx.save();
+    ctx.textAlign='center';
+    floaters.forEach(f=>{
+      const t=(now-f.startTime)/f.duration;
+      if(t>=1) return;
+      const alphaIn=easeOutCubic(Math.min(1,t/0.12));
+      const alphaOut = t>0.85 ? Math.max(0,1-((t-0.85)/0.15)) : 1;
+      const alpha=Math.min(alphaIn,alphaOut);
+      const ly=f.y - t*60;
+      ctx.globalAlpha=Math.max(0,alpha);
+      let cursorY=ly;
+      if(f.points!==null && f.points!==undefined){
+        ctx.font="700 16px 'JetBrains Mono', monospace";
+        ctx.fillStyle=PALETTE.textPrimary;
+        ctx.shadowColor='rgba(0,0,0,.7)'; ctx.shadowBlur=6;
+        ctx.fillText('+'+f.points, f.x, cursorY);
+        cursorY+=16;
+      }
+      if(f.tierLabel){
+        ctx.font="700 12px 'Space Grotesk', sans-serif";
+        ctx.fillStyle=f.tierColor||PALETTE.textPrimary;
+        ctx.shadowColor='rgba(255,255,255,.4)'; ctx.shadowBlur=8;
+        ctx.fillText(f.tierLabel, f.x, cursorY);
+        cursorY+=14;
+      }
+      if(f.comboText){
+        ctx.font="700 11px 'Space Grotesk', sans-serif";
+        ctx.fillStyle=PALETTE.amber;
+        ctx.shadowBlur=0;
+        ctx.fillText(f.comboText, f.x, cursorY);
+      }
+      survivors.push(f);
+    });
+    ctx.restore();
+    floaters=survivors;
+  }
+
+  function drawDragVisual(){
+    if(!dragVisual) return;
+    ctx.save();
+    ctx.strokeStyle=dragVisual.strokeColor;
+    ctx.lineWidth=3;
+    ctx.setLineDash([6,5]);
+    ctx.globalAlpha=0.85;
+    ctx.beginPath();
+    ctx.moveTo(dragVisual.originX,dragVisual.originY);
+    ctx.lineTo(dragVisual.endX,dragVisual.endY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle=dragVisual.strokeColor;
+    ctx.shadowColor=dragVisual.strokeColor; ctx.shadowBlur=8;
+    ctx.beginPath(); ctx.arc(dragVisual.endX,dragVisual.endY,dragVisual.puckR,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawWarningLine(){
+    const {ch,rect}=cellMetrics();
+    ctx.save();
+    ctx.setLineDash([6,5]);
+    ctx.strokeStyle=PALETTE.danger;
+    ctx.globalAlpha=0.5;
+    ctx.shadowColor=PALETTE.danger; ctx.shadowBlur=4;
+    ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(0,ch); ctx.lineTo(rect.width,ch); ctx.stroke();
+    ctx.restore();
+  }
+
+  function renderFrame(now){
+    rafId=requestAnimationFrame(renderFrame);
+    const rect=canvas.getBoundingClientRect();
+    ctx.clearRect(0,0,rect.width,rect.height);
+    if(!grid) return;
+    drawWarningLine();
+    drawGrid(now);
+    drawSparkLines(now);
+    drawParticles(now);
+    drawFloaters(now);
+    drawDragVisual();
+  }
+
+  buildInit();
+  function buildInit(){
+    resizeCanvas();
+    loadPrefs();
+    updatePauseVisibility();
+    rafId=requestAnimationFrame(renderFrame);
+  }
 
   startBtn.addEventListener('click', ()=>{ ensureAudio(); playUIClick(); startGame(); });
   retryBtn.addEventListener('click', ()=>{ ensureAudio(); playUIClick(); startGame(); });
@@ -2211,325 +1883,6 @@
     if(soundOn) playUIClick();
     savePrefs();
   });
-
-  /* =====================================================================
-     TEMPORARY DEBUG OVERLAY — safe to delete
-     ---------------------------------------------------------------------
-     Everything from this banner down to the matching "END TEMPORARY DEBUG
-     OVERLAY" banner is throwaway diagnostic scaffolding for chasing frame
-     drops on phones. It is purely additive: it reads game state but never
-     writes it, and nothing above this point refers to anything below it,
-     so deleting the whole block restores the file exactly.
-
-     Activation: tap the ".brand" title 5x within 3s (the game runs as an
-     installed PWA, so there is no URL bar to pass a query param through).
-     The full-screen overlays sit above the header, so the taps have to
-     happen while a game is actually in progress.
-
-     Cost while switched off: one click listener, plus a mark/measure pair
-     around seven game functions and around a handful of sections inside
-     resolveGroup / finalizeClear / spawnParticles (see dbgSecStart). Section
-     marks are placed around loops, never inside them, so the count per
-     cascade stays in the dozens. No panel, no rAF loop, no rendering.
-     ===================================================================== */
-
-  const DBG_TAPS_NEEDED=5, DBG_TAP_WINDOW=3000;
-  const DBG_LONGTASK_MS=50, DBG_LOG_MAX=10;
-  const DBG_MEASURE_WINDOW=8000;   // how long a measure stays available for attribution
-  const DBG_PAINT_MS=250;          // panel refresh rate (the panel must not itself cause jank)
-
-  const dbg={
-    on:false, panel:null, raf:0, lastPaint:0,
-    frames:[],       // rAF timestamps inside the current 1s window
-    tasks:[],        // last DBG_LOG_MAX long tasks
-    measures:[],     // recent game:* measures, for long-task attribution
-    taps:[], longtaskSupported:false
-  };
-
-  /* Wraps a game function in a performance mark/measure pair so a long task
-     can be blamed on whatever was running inside it. try/finally matters: if
-     a wrapped call ever throws, an unclosed start mark would poison the next
-     measurement with a bogus multi-second duration. */
-  function dbgInstrument(name, fn){
-    const label='game:'+name, mStart=label+':s', mEnd=label+':e';
-    return function(){
-      performance.mark(mStart);
-      try{
-        return fn.apply(this, arguments);
-      } finally {
-        performance.mark(mEnd);
-        try{ performance.measure(label, mStart, mEnd); }catch(e){ /* start mark lost */ }
-        performance.clearMarks(mStart);
-        performance.clearMarks(mEnd);
-      }
-    };
-  }
-
-  /* Reassigning the hoisted function declarations means every existing call
-     site picks the wrapper up without a single edit inside the game code. */
-  resolveGroup     = dbgInstrument('resolveGroup', resolveGroup);
-  computeBombChain = dbgInstrument('computeBombChain', computeBombChain);
-  bestPrismChain   = dbgInstrument('bestPrismChain', bestPrismChain);
-  floodFill        = dbgInstrument('floodFill', floodFill);   // iterative BFS, so every call is an outer call
-  doSpawn          = dbgInstrument('doSpawn', doSpawn);
-  growGrid         = dbgInstrument('growGrid', growGrid);
-  finalizeClear    = dbgInstrument('finalizeClear', finalizeClear);
-
-  /* Section-level instrumentation, one level finer than dbgInstrument.
-     Whole-function wrappers can only ever say "the stall happened somewhere
-     inside resolveGroup"; these bracket the individual suspect sections, so
-     dbgAttribute can name the actual one.
-
-     These two are function DECLARATIONS on purpose: they hoist to the top of
-     this IIFE, which is what lets the dbgSec* one-liners sitting up inside
-     resolveGroup / finalizeClear / spawnParticles call them even though they
-     are defined down here. That keeps all the real machinery inside this
-     block — removing the overlay means deleting this block and then stripping
-     the marked one-liners above (grep for "dbgSec").
-
-     Sections nest (resolveGroup > :domWrites > :particles). That is
-     deliberate: comparing an outer measure against the inner ones is the
-     whole point, and dbgAttribute knows how to unpick the nesting. */
-  function dbgSecStart(name){
-    if(typeof performance==='undefined' || !performance.mark) return;
-    performance.mark('game:'+name+':s');
-  }
-  function dbgSecEnd(name){
-    if(typeof performance==='undefined' || !performance.mark) return;
-    const label='game:'+name, mStart=label+':s', mEnd=label+':e';
-    performance.mark(mEnd);
-    try{ performance.measure(label, mStart, mEnd); }catch(e){ /* start mark lost */ }
-    performance.clearMarks(mStart);
-    performance.clearMarks(mEnd);
-  }
-
-  /* Observers run unconditionally so the log already has history in it the
-     moment the overlay is switched on. Both callbacks are passive. */
-  (function dbgObserve(){
-    if(typeof PerformanceObserver!=='function') return;
-    const supported=PerformanceObserver.supportedEntryTypes||[];
-    if(supported.indexOf('longtask')>=0){
-      try{
-        new PerformanceObserver(list=>{
-          list.getEntries().forEach(e=>{
-            dbg.tasks.push({start:e.startTime, dur:e.duration, src:'longtask', attr:''});
-          });
-          if(dbg.tasks.length>DBG_LOG_MAX) dbg.tasks.splice(0, dbg.tasks.length-DBG_LOG_MAX);
-        }).observe({entryTypes:['longtask']});
-        dbg.longtaskSupported=true;
-      }catch(e){ /* refused; the rAF loop falls back to frame-gap detection */ }
-    }
-    try{
-      new PerformanceObserver(list=>{
-        list.getEntries().forEach(e=>{
-          if(e.name.indexOf('game:')!==0) return;
-          dbg.measures.push({name:e.name.slice(5), start:e.startTime, end:e.startTime+e.duration});
-          performance.clearMeasures(e.name); // keep the performance timeline from growing all game
-        });
-        const cutoff=performance.now()-DBG_MEASURE_WINDOW;
-        while(dbg.measures.length && dbg.measures[0].end<cutoff) dbg.measures.shift();
-        if(dbg.measures.length>400) dbg.measures.splice(0, dbg.measures.length-400);
-      }).observe({entryTypes:['measure']});
-    }catch(e){ /* no measure observer: long tasks just show up unattributed */ }
-  })();
-
-  /* The actual diagnostic: which instrumented call was running during this
-     task's time window — narrowed to the most specific one that can account
-     for it.
-
-     Listing every overlapping measure is what made the previous pass point at
-     the wrong code: a whole-function measure like resolveGroup spans every
-     section inside it, so an expensive :domWrites loop showed up as
-     "resolveGroup, floodFill, computeBombChain" and floodFill took the blame
-     for time it never spent.
-
-     Ranking rule, in order:
-       1. Keep measures that COVER at least half the task - those can actually
-          explain the stall. A measure that merely clips the edge of it cannot.
-       2. Among those, shortest window first. The tightest window that still
-          covers the task is the smallest piece of code that was really busy;
-          its parents follow it in the list, so outer-vs-inner is readable in
-          one line.
-       3. If nothing covers half the task (it straddled several sibling
-          sections), fall back to dropping measures that strictly contain
-          another overlapping one, which still leaves the innermost sections.
-
-     An outer name appearing ALONE is itself a result: it means the task sat
-     inside that function but no instrumented section within it accounted for
-     the bulk, so the time is in code that still has no marks around it.
-
-     Durations are printed so an outer measure sitting well above its inner
-     ones is obvious at a glance. Cached on the task once it resolves to
-     something, so the label survives the measure window scrolling past. */
-  function dbgAttribute(task){
-    const t0=task.start, t1=task.start+task.dur;
-    const span=task.dur>0?task.dur:1;
-    const hit=[];
-    for(let i=0;i<dbg.measures.length;i++){
-      const m=dbg.measures[i];
-      if(m.end>=t0 && m.start<=t1) hit.push(m);
-    }
-    if(!hit.length) return '';
-
-    /* Aggregate by name FIRST. A section that ran twice inside one task -
-       two forced reflows either side of a style write, say - is one piece of
-       code, and testing each half against the coverage bar on its own would
-       let both fall under it and hand the blame back to the ancestor. */
-    const stats={}, order=[];
-    hit.forEach(m=>{
-      if(stats[m.name]===undefined){ stats[m.name]={n:0, ms:0, ov:0}; order.push(m.name); }
-      const st=stats[m.name];
-      st.n++;
-      st.ms+=m.end-m.start;                                    // for display
-      st.ov+=Math.min(m.end,t1)-Math.max(m.start,t0);           // for coverage
-    });
-
-    let names=order.filter(n=> stats[n].ov/span>=0.5);
-    if(!names.length){
-      // Nothing covers the task on its own: drop ancestors, keep the leaves.
-      const leaves=hit.filter(m=> !hit.some(n=> n!==m &&
-        n.start>=m.start && n.end<=m.end && (n.start>m.start || n.end<m.end)));
-      const leafNames={};
-      leaves.forEach(m=> leafNames[m.name]=true);
-      names=order.filter(n=> leafNames[n]);
-      if(!names.length) names=order.slice();   // identical windows: nothing to narrow
-    }
-    names.sort((a,b)=> stats[a].ms-stats[b].ms);   // most specific first
-
-    const SHOW=3;
-    const out=names.slice(0,SHOW).map(n=>{
-      const st=stats[n];
-      return n+(st.n>1?' x'+st.n:'')+' <span class="dbg-dim">'+Math.round(st.ms)+'ms</span>';
-    });
-    if(names.length>SHOW) out.push('<span class="dbg-dim">+'+(names.length-SHOW)+'</span>');
-    return out.join(', ');
-  }
-
-  function dbgEnsureStyle(){
-    if(document.getElementById('dbgStyle')) return;
-    const st=document.createElement('style');
-    st.id='dbgStyle';
-    st.textContent=
-      '#dbgPanel{position:fixed;left:6px;bottom:6px;z-index:9999;max-width:min(94vw,340px);'+
-      'max-height:46vh;overflow:auto;background:rgba(4,6,12,.86);color:#EDEFF5;'+
-      "font:11px/1.4 'JetBrains Mono',monospace;padding:7px 9px;border-radius:8px;"+
-      'border:1px solid rgba(255,255,255,.18);pointer-events:none;'+
-      '-webkit-user-select:none;user-select:none;}'+
-      '#dbgPanel b{color:#2DE1C2;font-weight:700;}'+
-      '#dbgPanel .dbg-warn{color:#FFC15E;}'+
-      '#dbgPanel .dbg-hit{color:#FF5D73;font-weight:700;}'+
-      '#dbgPanel .dbg-dim{color:#828AA0;}'+
-      '#dbgToast{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:10000;'+
-      'background:rgba(4,6,12,.92);color:#EDEFF5;border:1px solid rgba(255,255,255,.22);'+
-      "font:600 12px/1 'JetBrains Mono',monospace;padding:9px 14px;border-radius:999px;"+
-      'pointer-events:none;}'+
-      '.brand{-webkit-user-select:none;user-select:none;}';
-    document.head.appendChild(st);
-  }
-
-  function dbgToast(msg){
-    dbgEnsureStyle();
-    const old=document.getElementById('dbgToast');
-    if(old) old.remove();
-    const el=document.createElement('div');
-    el.id='dbgToast';
-    el.textContent=msg;
-    document.body.appendChild(el);
-    setTimeout(()=>{ if(el.parentNode) el.remove(); }, 1400);
-  }
-
-  function dbgFrame(now){
-    dbg.frames.push(now);
-    while(dbg.frames.length>2 && now-dbg.frames[0]>1000) dbg.frames.shift();
-    // Safari/iOS has no longtask entry type; approximate it from frame gaps so
-    // the log is still useful there. Flagged with a leading "~" in the panel.
-    if(!dbg.longtaskSupported && dbg.frames.length>1){
-      const gap=now-dbg.frames[dbg.frames.length-2];
-      if(gap>=DBG_LONGTASK_MS){
-        dbg.tasks.push({start:now-gap, dur:gap, src:'gap', attr:''});
-        if(dbg.tasks.length>DBG_LOG_MAX) dbg.tasks.shift();
-      }
-    }
-    if(now-dbg.lastPaint>=DBG_PAINT_MS){ dbg.lastPaint=now; dbgRender(); }
-    dbg.raf=requestAnimationFrame(dbgFrame);
-  }
-
-  function dbgRender(){
-    if(!dbg.panel) return;
-    const now=performance.now();
-
-    let fps=0, worst=0;
-    if(dbg.frames.length>1){
-      const span=dbg.frames[dbg.frames.length-1]-dbg.frames[0];
-      if(span>0) fps=Math.round((dbg.frames.length-1)*1000/span);
-      for(let i=1;i<dbg.frames.length;i++){
-        const gap=dbg.frames[i]-dbg.frames[i-1];
-        if(gap>worst) worst=gap;
-      }
-    }
-
-    let filled=0, total=0;
-    if(grid){
-      for(let r=0;r<grid.length;r++){
-        const row=grid[r];
-        for(let c=0;c<row.length;c++){ total++; if(row[c]) filled++; }
-      }
-    }
-
-    const lines=[];
-    lines.push('<b>FPS '+fps+'</b> <span class="dbg-dim">worst frame '+Math.round(worst)+'ms</span>');
-    lines.push('stage '+stageIndex+'  '+COLS+'x'+ROWS+'  cells '+filled+'/'+total+'  tier '+qualityTier+
-               '  <span class="dbg-dim">'+(isMobile?'mobile':'desktop')+'</span>');
-    if(!dbg.longtaskSupported) lines.push('<span class="dbg-warn">no longtask API - frame gaps (~)</span>');
-    lines.push('<span class="dbg-dim">-- last '+DBG_LOG_MAX+' tasks &gt;'+DBG_LONGTASK_MS+'ms --</span>');
-    if(!dbg.tasks.length){
-      lines.push('<span class="dbg-dim">(none yet)</span>');
-    } else {
-      for(let i=dbg.tasks.length-1;i>=0;i--){   // newest first
-        const t=dbg.tasks[i];
-        if(!t.attr) t.attr=dbgAttribute(t);
-        lines.push('<span class="dbg-hit">'+(t.src==='gap'?'~':'')+Math.round(t.dur)+'ms</span> '+
-                   '<span class="dbg-dim">'+((now-(t.start+t.dur))/1000).toFixed(1)+'s ago</span> '+
-                   (t.attr||'<span class="dbg-warn">?</span>'));
-      }
-    }
-    dbg.panel.innerHTML=lines.join('<br>');
-  }
-
-  function dbgToggle(){
-    dbg.on=!dbg.on;
-    if(dbg.on){
-      dbgEnsureStyle();
-      if(!dbg.panel){
-        dbg.panel=document.createElement('div');
-        dbg.panel.id='dbgPanel';
-        document.body.appendChild(dbg.panel);
-      }
-      dbg.panel.style.display='block';
-      dbg.frames.length=0; dbg.lastPaint=0;
-      dbgRender();
-      dbg.raf=requestAnimationFrame(dbgFrame);
-    } else {
-      if(dbg.raf) cancelAnimationFrame(dbg.raf);
-      dbg.raf=0;
-      dbg.frames.length=0;
-      if(dbg.panel) dbg.panel.style.display='none';
-    }
-    dbgToast('Debug mode '+(dbg.on?'ON':'OFF'));
-  }
-
-  (function dbgBindGesture(){
-    const brandEl=document.querySelector('.brand');
-    if(!brandEl) return;
-    brandEl.addEventListener('click', ()=>{
-      const now=Date.now();
-      dbg.taps.push(now);
-      while(dbg.taps.length && now-dbg.taps[0]>DBG_TAP_WINDOW) dbg.taps.shift();
-      if(dbg.taps.length>=DBG_TAPS_NEEDED){ dbg.taps.length=0; dbgToggle(); }
-    });
-  })();
-
-  /* ============ END TEMPORARY DEBUG OVERLAY — safe to delete ============ */
 
   setInterval(tick, 100);
 })();
