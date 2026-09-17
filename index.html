@@ -795,8 +795,9 @@
     const edges=[];
     const depths={};
     const queue=[[startR,startC,0,null]];
-    while(queue.length){
-      const [r,c,d,parent]=queue.shift();
+    let head=0;
+    while(head<queue.length){
+      const [r,c,d,parent]=queue[head++];
       group.push([r,c]);
       depths[key(r,c)]=d;
       if(parent) edges.push({from:parent, to:[r,c], depth:d-1});
@@ -818,8 +819,9 @@
     const visitedPrismTriggers=new Set();
     const group=[], edges=[], depths={}, centers=[], triggeredChains=[];
     const queue=[[r,c,0,null]];
-    while(queue.length){
-      const [cr,cc,cd]=queue.shift();
+    let head=0;
+    while(head<queue.length){
+      const [cr,cc,cd]=queue[head++];
       centers.push(cd);
       const centerCell=grid[cr][cc];
       const rad=(centerCell && centerCell.radius) || 1;
@@ -890,8 +892,9 @@
     const clusterVisited=new Set([startR+'_'+startC]);
     const clusterQueue=[[startR,startC]];
     const clusterCells=[[startR,startC]];
-    while(clusterQueue.length){
-      const [pr,pc]=clusterQueue.shift();
+    let clusterHead=0;
+    while(clusterHead<clusterQueue.length){
+      const [pr,pc]=clusterQueue[clusterHead++];
       neighbors(pr,pc).forEach(([nr,nc])=>{
         const n=grid[nr][nc];
         if(n && n.type==='prism'){
@@ -912,8 +915,9 @@
     const touchCount={};
     const firstSeenOrder={};
     let scanIndex=0;
-    while(queue.length){
-      const [pr,pc]=queue.shift();
+    let head=0;
+    while(head<queue.length){
+      const [pr,pc]=queue[head++];
       neighbors(pr,pc).forEach(([nr,nc])=>{
         const n=grid[nr][nc];
         scanIndex++;
@@ -1382,7 +1386,7 @@
     }
   }
 
-  function growGrid(){
+  function growGrid(silent){
     const oldCols=COLS, oldRows=ROWS, oldGrid=grid;
     COLS=oldCols+1; ROWS=oldRows+1;
     const next=Array.from({length:ROWS+1},()=>Array(COLS).fill(null));
@@ -1394,8 +1398,7 @@
     grid=next;
     gridWrap.style.aspectRatio=COLS+'/'+(ROWS+1);
     resizeCanvas();
-    flashExpand();
-    playExpand();
+    if(!silent){ flashExpand(); playExpand(); }
   }
 
   function flashExpand(){
@@ -1577,67 +1580,122 @@
   }
   function easeOutCubic(t){ return 1-Math.pow(1-t,3); }
 
-  function drawOrb(cell, cx, cy, radius, now){
-    ctx.save();
+  /* drawOrbCore does the actual gradient+shadow rendering. It's pure
+     given (cell type/color/radius, radius) — no time-based animation —
+     so its output is cacheable into a sprite (see getOrbSprite below). */
+  function drawOrbCore(c, cell, cx, cy, radius){
+    c.save();
     if(cell.type==='normal'){
       const hex=colorHexFor(cell.color);
       const light=mixWithWhite(hex,0.5);
-      const grad=ctx.createRadialGradient(cx-radius*0.34,cy-radius*0.46,radius*0.05,cx,cy,radius*1.05);
+      const grad=c.createRadialGradient(cx-radius*0.34,cy-radius*0.46,radius*0.05,cx,cy,radius*1.05);
       grad.addColorStop(0,light);
       grad.addColorStop(0.66,hex);
       grad.addColorStop(1,hex);
-      ctx.shadowColor=rgba(hex,0.55); ctx.shadowBlur=9;
-      ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.fillStyle=grad; ctx.fill();
-      ctx.shadowBlur=0;
-      ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.clip();
-      const shade=ctx.createLinearGradient(cx,cy-radius*0.2,cx,cy+radius);
+      c.shadowColor=rgba(hex,0.55); c.shadowBlur=9;
+      c.beginPath(); c.arc(cx,cy,radius,0,Math.PI*2); c.fillStyle=grad; c.fill();
+      c.shadowBlur=0;
+      c.beginPath(); c.arc(cx,cy,radius,0,Math.PI*2); c.clip();
+      const shade=c.createLinearGradient(cx,cy-radius*0.2,cx,cy+radius);
       shade.addColorStop(0.55,'rgba(0,0,0,0)');
       shade.addColorStop(1,'rgba(0,0,0,0.3)');
-      ctx.fillStyle=shade; ctx.fillRect(cx-radius,cy-radius,radius*2,radius*2);
+      c.fillStyle=shade; c.fillRect(cx-radius,cy-radius,radius*2,radius*2);
     } else if(cell.type==='prism'){
-      ctx.shadowColor='rgba(255,255,255,.55)'; ctx.shadowBlur=10;
-      ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2);
+      c.shadowColor='rgba(255,255,255,.55)'; c.shadowBlur=10;
+      c.beginPath(); c.arc(cx,cy,radius,0,Math.PI*2);
       if(SUPPORTS_CONIC){
-        const grad=ctx.createConicGradient(0,cx,cy);
+        const grad=c.createConicGradient(0,cx,cy);
         grad.addColorStop(0,PALETTE.coral);
         grad.addColorStop(0.2,PALETTE.amber);
         grad.addColorStop(0.4,PALETTE.lime);
         grad.addColorStop(0.6,PALETTE.teal);
         grad.addColorStop(0.8,PALETTE.violet);
         grad.addColorStop(1,PALETTE.coral);
-        ctx.fillStyle=grad;
+        c.fillStyle=grad;
       } else {
-        const grad=ctx.createRadialGradient(cx,cy,0,cx,cy,radius);
+        const grad=c.createRadialGradient(cx,cy,0,cx,cy,radius);
         grad.addColorStop(0,'#ffffff');
         grad.addColorStop(1,PALETTE.violet);
-        ctx.fillStyle=grad;
+        c.fillStyle=grad;
       }
-      ctx.fill();
-      ctx.shadowBlur=0;
+      c.fill();
+      c.shadowBlur=0;
     } else {
       const rad=cell.radius||1;
       const core=rad>=3?'#3b2f52':rad>=2?'#4a3550':'#3b4258';
       const glow=rad>=3?PALETTE.violet:rad>=2?PALETTE.coral:PALETTE.bombSpark;
-      const grad=ctx.createRadialGradient(cx-radius*0.32,cy-radius*0.44,radius*0.05,cx,cy,radius*1.05);
+      const grad=c.createRadialGradient(cx-radius*0.32,cy-radius*0.44,radius*0.05,cx,cy,radius*1.05);
       grad.addColorStop(0,core);
       grad.addColorStop(0.72,PALETTE.bombCore);
-      ctx.shadowColor=rgba(glow,0.6); ctx.shadowBlur=11;
-      ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.fillStyle=grad; ctx.fill();
-      ctx.shadowBlur=0;
-      // pulsing spark glyph
-      const periodMs = rad>=3?700:rad>=2?900:1100;
-      const phase=(now%periodMs)/periodMs;
-      const wave=Math.sin(phase*Math.PI*2);
-      const glyphScale=0.88+0.24*Math.max(0,wave);
-      const glyphAlpha=0.6+0.4*Math.max(0,wave);
-      ctx.globalAlpha=glyphAlpha;
-      ctx.fillStyle=rad>=3?'#ffffff':glow;
-      ctx.font=`${Math.round(radius*1.15*glyphScale)}px sans-serif`;
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText(rad>=2?'✹':'✺', cx, cy+radius*0.03);
-      ctx.globalAlpha=1;
+      c.shadowColor=rgba(glow,0.6); c.shadowBlur=11;
+      c.beginPath(); c.arc(cx,cy,radius,0,Math.PI*2); c.fillStyle=grad; c.fill();
+      c.shadowBlur=0;
     }
+    c.restore();
+  }
+
+  // The bomb's spark glyph pulses over time, so it can't be baked into
+  // the static sprite — drawn fresh each frame, but it's just a fillText.
+  function drawBombGlyph(cell, cx, cy, radius, now){
+    const rad=cell.radius||1;
+    const glow=rad>=3?PALETTE.violet:rad>=2?PALETTE.coral:PALETTE.bombSpark;
+    const periodMs = rad>=3?700:rad>=2?900:1100;
+    const phase=(now%periodMs)/periodMs;
+    const wave=Math.sin(phase*Math.PI*2);
+    const glyphScale=0.88+0.24*Math.max(0,wave);
+    const glyphAlpha=0.6+0.4*Math.max(0,wave);
+    ctx.save();
+    ctx.globalAlpha=glyphAlpha;
+    ctx.fillStyle=rad>=3?'#ffffff':glow;
+    ctx.font=`${Math.round(radius*1.15*glyphScale)}px sans-serif`;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(rad>=2?'✹':'✺', cx, cy+radius*0.03);
     ctx.restore();
+  }
+
+  /* Orb sprites are pre-rendered once per (type/color/radius) at the
+     board's current cell radius and reused every frame via drawImage,
+     instead of re-running gradients+shadowBlur for every filled cell on
+     every frame — that per-orb regeneration is what scales with board
+     fullness and was the actual late-game bottleneck (drawGrid/renderFrame
+     cost tracked filled-cell count directly, confirmed by profiling).
+     The cache is keyed on a rounded reference radius and invalidated
+     wholesale when that radius or the device pixel ratio changes. */
+  let orbSpriteCache=new Map();
+  let orbSpriteRefRadius=-1;
+  let orbSpriteDpr=-1;
+
+  function getOrbSprite(cell, refRadius){
+    const rr=Math.max(1,Math.round(refRadius));
+    if(rr!==orbSpriteRefRadius || dpr!==orbSpriteDpr){
+      orbSpriteCache.clear();
+      orbSpriteRefRadius=rr;
+      orbSpriteDpr=dpr;
+    }
+    const variant = cell.type==='normal' ? ('n:'+cell.color)
+      : cell.type==='prism' ? 'p'
+      : ('b:'+(cell.radius||1));
+    let sprite=orbSpriteCache.get(variant);
+    if(!sprite){
+      const pad=Math.ceil(rr*0.35)+14;
+      const size=Math.ceil((rr+pad)*2);
+      const off=document.createElement('canvas');
+      off.width=Math.ceil(size*dpr); off.height=Math.ceil(size*dpr);
+      const octx=off.getContext('2d');
+      octx.setTransform(dpr,0,0,dpr,0,0);
+      drawOrbCore(octx, cell, size/2, size/2, rr);
+      sprite={canvas:off, size, refRadius:rr};
+      orbSpriteCache.set(variant, sprite);
+    }
+    return sprite;
+  }
+
+  function drawOrb(cell, cx, cy, radius, now, refRadius){
+    const sprite=getOrbSprite(cell, refRadius||radius);
+    const scale=radius/sprite.refRadius;
+    const half=sprite.size/2*scale;
+    ctx.drawImage(sprite.canvas, cx-half, cy-half, half*2, half*2);
+    if(cell.type==='bomb') drawBombGlyph(cell, cx, cy, radius, now);
   }
 
   function drawRing(cx,cy,radius,color,lineWidth,glow){
@@ -1669,7 +1727,7 @@
           const elapsed=now-pop.startTime-pop.delay;
           if(elapsed<0){
             // still within its stagger delay — looks like a normal orb until its own pop starts
-            drawOrb(pop.cell, cx, cy, baseRadius, now);
+            drawOrb(pop.cell, cx, cy, baseRadius, now, baseRadius);
             continue;
           }
           const t=Math.min(1,elapsed/pop.duration);
@@ -1678,7 +1736,7 @@
           if(alpha>0){
             ctx.save();
             ctx.globalAlpha=alpha;
-            drawOrb(pop.cell, cx, cy, baseRadius*scale, now);
+            drawOrb(pop.cell, cx, cy, baseRadius*scale, now, baseRadius);
             ctx.restore();
           }
           continue; // mid-pop or fully popped (invisible) — never fall through to normal draw
@@ -1711,7 +1769,7 @@
 
         ctx.save();
         ctx.globalAlpha=alpha;
-        drawOrb(cell, cx, cy+offsetY, baseRadius*scale, now);
+        drawOrb(cell, cx, cy+offsetY, baseRadius*scale, now, baseRadius);
         ctx.restore();
 
         if(armedKey===key){
@@ -1853,6 +1911,91 @@
     drawFloaters(now);
     drawDragVisual();
   }
+
+  /* ================= Debug / profiling instrumentation =================
+     Console-only tooling, inert unless invoked. Wraps the suspect
+     functions with cheap performance.now() timers — counters only, no
+     per-call logging, so the instrumentation itself doesn't skew the
+     measurement — and exposes window.debugSkipTo() to jump straight to
+     a large, dense late-game board instead of grinding to one by hand. */
+  const perfStats={};
+  function wrapPerf(name,fn){
+    const s=perfStats[name]={count:0,totalMs:0,worstMs:0,windowStart:performance.now()};
+    return function(){
+      const t0=performance.now();
+      const r=fn.apply(this,arguments);
+      const dt=performance.now()-t0;
+      s.count++; s.totalMs+=dt; if(dt>s.worstMs) s.worstMs=dt;
+      return r;
+    };
+  }
+  floodFill=wrapPerf('floodFill',floodFill);
+  computeBombChain=wrapPerf('computeBombChain',computeBombChain);
+  enumeratePrismCandidates=wrapPerf('enumeratePrismCandidates',enumeratePrismCandidates);
+  bestPrismChain=wrapPerf('bestPrismChain',bestPrismChain);
+  updatePreview=wrapPerf('updatePreview',updatePreview);
+  drawGrid=wrapPerf('drawGrid',drawGrid);
+  renderFrame=wrapPerf('renderFrame',renderFrame);
+
+  window.perfReport=function(reset){
+    const now=performance.now();
+    const rows={};
+    Object.keys(perfStats).forEach(name=>{
+      const s=perfStats[name];
+      const secs=Math.max(0.001,(now-s.windowStart)/1000);
+      rows[name]={
+        calls:s.count,
+        'calls/sec':+(s.count/secs).toFixed(1),
+        avgMs:s.count?+(s.totalMs/s.count).toFixed(3):0,
+        worstMs:+s.worstMs.toFixed(3)
+      };
+      if(reset){ s.count=0; s.totalMs=0; s.worstMs=0; s.windowStart=now; }
+    });
+    if(typeof console!=='undefined' && console.table) console.table(rows);
+    return rows;
+  };
+  window.__perfAutoTimer=null;
+  window.perfAuto=function(on,intervalMs){
+    if(window.__perfAutoTimer){ clearInterval(window.__perfAutoTimer); window.__perfAutoTimer=null; }
+    if(on){ window.__perfAutoTimer=setInterval(()=>window.perfReport(true), intervalMs||3000); }
+  };
+
+  window.debugSkipTo=function(targetScore,opts){
+    opts=opts||{};
+    const fillRatio=opts.fillRatio!==undefined?opts.fillRatio:0.75;
+    if(!gameActive) startGame();
+    score=targetScore;
+    scoreVal.textContent=String(score).padStart(6,'0');
+    COLS=BASE_COLS; ROWS=BASE_ROWS; stageIndex=0;
+    grid=newGrid();
+    gridWrap.style.aspectRatio=COLS+'/'+(ROWS+1);
+    resizeCanvas();
+    while(stageIndex<GROWTH_STAGES.length && score>=GROWTH_STAGES[stageIndex]){
+      stageIndex++;
+      growGrid(true);
+    }
+    const seedBomb=(BOMB_CHANCE_RANGE[0]+BOMB_CHANCE_RANGE[1])/2;
+    const seedPrism=(PRISM_CHANCE_RANGE[0]+PRISM_CHANCE_RANGE[1])/2;
+    const fillRows=Math.max(1,Math.min(ROWS,Math.round((ROWS+1)*fillRatio)));
+    for(let c=0;c<COLS;c++){
+      for(let i=0;i<fillRows;i++){
+        grid[ROWS-i][c]=makeOrb(seedBomb,seedPrism);
+      }
+    }
+    dangerGlow.classList.toggle('active', fillRows>=ROWS);
+    scheduleSpawn();
+    console.log(`[debugSkipTo] score=${score} stage=${stageIndex} grid=${COLS}x${ROWS+1} filledRows=${fillRows}/${ROWS+1}`);
+  };
+
+  window.__debug={
+    get grid(){ return grid; },
+    get COLS(){ return COLS; },
+    get ROWS(){ return ROWS; },
+    get stageIndex(){ return stageIndex; },
+    cellMetrics,
+    setCell(r,c,cell){ grid[r][c]=cell; },
+    perfStats
+  };
 
   buildInit();
   function buildInit(){
