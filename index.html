@@ -572,6 +572,18 @@
   const gridWrap=document.getElementById('gridWrap');
   const canvas=document.getElementById('gameCanvas');
   const ctx=canvas.getContext('2d');
+  // Instance-level save/restore tracking (main canvas ctx only — offscreen
+  // sprite-build contexts are disposable and don't need this). Catches any
+  // future save() left unmatched by a restore() on some exit path, which
+  // would otherwise silently corrupt globalAlpha/transform/clip for every
+  // draw call after it until the next canvas.width/height reset. See
+  // window.__debug.ctxSaveDepth / ctxSaveImbalances.
+  let ctxSaveDepth=0;
+  let ctxSaveImbalances=0;
+  const __ctxSave=ctx.save.bind(ctx);
+  const __ctxRestore=ctx.restore.bind(ctx);
+  ctx.save=function(){ ctxSaveDepth++; return __ctxSave(); };
+  ctx.restore=function(){ ctxSaveDepth--; return __ctxRestore(); };
   const dangerGlow=document.getElementById('dangerGlow');
   const surgeBtn=document.getElementById('surgeBtn');
   const scoreVal=document.getElementById('scoreVal');
@@ -784,7 +796,7 @@
     return {cw:rect.width/COLS, ch:rect.height/(ROWS+1), rect};
   }
 
-  function resizeCanvas(){
+  function resizeCanvas(context){
     const rect=gridWrap.getBoundingClientRect();
     const pad=parseFloat(getComputedStyle(gridWrap).paddingLeft)||8;
     const w=Math.max(1, rect.width-pad*2);
@@ -795,8 +807,14 @@
     canvas.width=Math.round(w*dpr);
     canvas.height=Math.round(h*dpr);
     ctx.setTransform(dpr,0,0,dpr,0,0);
+    // canvas.width/height reassignment fully resets the native 2D context
+    // (transform, alpha, clip, and the save/restore stack) per spec — our
+    // tracked depth needs to follow that reset or it'll assert a phantom
+    // imbalance on the next renderFrame.
+    ctxSaveDepth=0;
     // Board dimensions changed — any gesture-cached metrics are stale.
     gestureMetrics=null;
+    verifyOrbSpriteRebuild(context||'resizeCanvas');
   }
 
   let resizeQueued=false;
@@ -1454,7 +1472,15 @@
     }
     grid=next;
     gridWrap.style.aspectRatio=COLS+'/'+(ROWS+1);
-    resizeCanvas();
+    // grid/COLS/ROWS are already the new size at this point (all synchronous,
+    // single-threaded — growGrid() only ever runs as its own top-level task
+    // via finalizeClear()'s setTimeout, never nested inside a rAF/drawGrid
+    // call), so there's no frame where the new-size grid array can be drawn
+    // against a not-yet-resized canvas, or vice versa. Logged anyway so a
+    // field report can confirm that instead of relying on this comment.
+    console.log('[growGrid] '+oldCols+'x'+(oldRows+1)+' -> '+COLS+'x'+(ROWS+1)+
+      ' gridArray='+grid.length+'x'+grid[0].length+' (before resizeCanvas)');
+    resizeCanvas('growGrid');
     if(!silent){ flashExpand(); playExpand(); }
   }
 
@@ -1715,12 +1741,15 @@
     const glyphScale=0.88+0.24*Math.max(0,wave);
     const glyphAlpha=0.6+0.4*Math.max(0,wave);
     ctx.save();
-    ctx.globalAlpha=glyphAlpha;
-    ctx.fillStyle=rad>=3?'#ffffff':glow;
-    ctx.font=`${Math.round(radius*1.15*glyphScale)}px sans-serif`;
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(rad>=2?'✹':'✺', cx, cy+radius*0.03);
-    ctx.restore();
+    try{
+      ctx.globalAlpha=glyphAlpha;
+      ctx.fillStyle=rad>=3?'#ffffff':glow;
+      ctx.font=`${Math.round(radius*1.15*glyphScale)}px sans-serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(rad>=2?'✹':'✺', cx, cy+radius*0.03);
+    } finally {
+      ctx.restore();
+    }
   }
 
   /* Orb sprites are pre-rendered once per (type/color/radius) at the
@@ -1769,18 +1798,48 @@
     }
   }
 
+  // Instrumentation for the intermittent-invisible-orb bug: growGrid()/
+  // resizeCanvas() both reassign canvas.width/height (a full 2D-context
+  // reset) AND land exactly on the refRadius/dpr boundary that invalidates
+  // the whole sprite cache — two consequential state transitions on the
+  // same event where orb visibility has been observed to flip on-device.
+  // Eagerly rebuild (and verify) all 9 sprite variants right here,
+  // synchronously, instead of leaving it to lazy per-cell rebuilding during
+  // the next drawGrid() pass, so a partial/failed rebuild is caught and
+  // logged before any cell is ever drawn against it.
+  function verifyOrbSpriteRebuild(context){
+    const prevRefRadius=orbSpriteRefRadius, prevDpr=orbSpriteDpr;
+    const {cw,ch}=cellMetrics();
+    const refRadius=Math.min(cw,ch)/2*0.92;
+    const variants=COLORS.map(color=>({type:'normal',color}))
+      .concat([{type:'prism'}])
+      .concat([1,2,3].map(radius=>({type:'bomb',radius})));
+    let ok=0; const failed=[];
+    variants.forEach(cell=>{
+      const sprite=getOrbSprite(cell, refRadius);
+      if(sprite) ok++; else failed.push(cell.type+':'+(cell.color||cell.radius||''));
+    });
+    const cleared = prevRefRadius!==orbSpriteRefRadius || prevDpr!==orbSpriteDpr;
+    console.log('[sprite-rebuild] '+context+' refRadius '+prevRefRadius+'->'+orbSpriteRefRadius+
+      ' dpr '+prevDpr+'->'+orbSpriteDpr+' cacheCleared='+cleared+
+      ' rebuilt='+ok+'/'+variants.length+(failed.length?' FAILED=['+failed.join(',')+']':''));
+  }
+
   // Flat-fill fallback used whenever sprite generation or drawImage fails,
   // so a broken orb is a visible colored dot instead of nothing at all.
   function drawOrbPlaceholder(cell, cx, cy, radius){
     ctx.save();
-    ctx.beginPath();
-    ctx.arc(cx,cy,radius,0,Math.PI*2);
-    ctx.fillStyle = cell && cell.type==='normal' ? (colorHexFor(cell.color)||'#ff3b4e')
-      : cell && cell.type==='prism' ? PALETTE.violet
-      : cell && cell.type==='bomb' ? PALETTE.bombCore
-      : '#ff3b4e';
-    ctx.fill();
-    ctx.restore();
+    try{
+      ctx.beginPath();
+      ctx.arc(cx,cy,radius,0,Math.PI*2);
+      ctx.fillStyle = cell && cell.type==='normal' ? (colorHexFor(cell.color)||'#ff3b4e')
+        : cell && cell.type==='prism' ? PALETTE.violet
+        : cell && cell.type==='bomb' ? PALETTE.bombCore
+        : '#ff3b4e';
+      ctx.fill();
+    } finally {
+      ctx.restore();
+    }
   }
 
   function drawOrb(cell, cx, cy, radius, now, refRadius){
@@ -1808,11 +1867,14 @@
 
   function drawRing(cx,cy,radius,color,lineWidth,glow){
     ctx.save();
-    ctx.lineWidth=lineWidth;
-    ctx.strokeStyle=color;
-    if(glow){ ctx.shadowColor=color; ctx.shadowBlur=glow; }
-    ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.stroke();
-    ctx.restore();
+    try{
+      ctx.lineWidth=lineWidth;
+      ctx.strokeStyle=color;
+      if(glow){ ctx.shadowColor=color; ctx.shadowBlur=glow; }
+      ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.stroke();
+    } finally {
+      ctx.restore();
+    }
   }
 
   function drawGrid(now){
@@ -1844,9 +1906,12 @@
           const alpha = t<0.25 ? 1 : Math.max(0,1-((t-0.25)/0.75));
           if(alpha>0){
             ctx.save();
-            ctx.globalAlpha=alpha;
-            drawOrb(pop.cell, cx, cy, baseRadius*scale, now, baseRadius);
-            ctx.restore();
+            try{
+              ctx.globalAlpha=alpha;
+              drawOrb(pop.cell, cx, cy, baseRadius*scale, now, baseRadius);
+            } finally {
+              ctx.restore();
+            }
           }
           continue; // mid-pop or fully popped (invisible) — never fall through to normal draw
         }
@@ -1877,9 +1942,12 @@
         if(grabbedKey===key) scale*=0.92;
 
         ctx.save();
-        ctx.globalAlpha=alpha;
-        drawOrb(cell, cx, cy+offsetY, baseRadius*scale, now, baseRadius);
-        ctx.restore();
+        try{
+          ctx.globalAlpha=alpha;
+          drawOrb(cell, cx, cy+offsetY, baseRadius*scale, now, baseRadius);
+        } finally {
+          ctx.restore();
+        }
 
         if(previewKeys.has(key)){
           const ringColor = previewClassUsed==='preview-blast' ? PALETTE.bombSpark : 'rgba(255,255,255,.95)';
@@ -1899,116 +1967,131 @@
   function drawSparkLines(now){
     const survivors=[];
     ctx.save();
-    ctx.lineCap='round';
-    sparkLines.forEach(line=>{
-      const elapsed=now-line.startTime-line.delay;
-      if(elapsed<0){ survivors.push(line); return; }
-      const t=elapsed/line.duration;
-      if(t>1.0){ return; } // expired
-      const reveal=Math.min(1, t/0.6);
-      const alpha = t<0.6 ? 0.9 : Math.max(0,0.9*(1-((t-0.6)/0.4)));
-      if(alpha<=0){ return; }
-      const ex=line.x1+(line.x2-line.x1)*reveal;
-      const ey=line.y1+(line.y2-line.y1)*reveal;
-      ctx.globalAlpha=alpha;
-      ctx.strokeStyle=line.color;
-      ctx.lineWidth=3;
-      ctx.beginPath(); ctx.moveTo(line.x1,line.y1); ctx.lineTo(ex,ey); ctx.stroke();
-      survivors.push(line);
-    });
-    ctx.restore();
+    try{
+      ctx.lineCap='round';
+      sparkLines.forEach(line=>{
+        const elapsed=now-line.startTime-line.delay;
+        if(elapsed<0){ survivors.push(line); return; }
+        const t=elapsed/line.duration;
+        if(t>1.0){ return; } // expired
+        const reveal=Math.min(1, t/0.6);
+        const alpha = t<0.6 ? 0.9 : Math.max(0,0.9*(1-((t-0.6)/0.4)));
+        if(alpha<=0){ return; }
+        const ex=line.x1+(line.x2-line.x1)*reveal;
+        const ey=line.y1+(line.y2-line.y1)*reveal;
+        ctx.globalAlpha=alpha;
+        ctx.strokeStyle=line.color;
+        ctx.lineWidth=3;
+        ctx.beginPath(); ctx.moveTo(line.x1,line.y1); ctx.lineTo(ex,ey); ctx.stroke();
+        survivors.push(line);
+      });
+    } finally {
+      ctx.restore();
+    }
     sparkLines=survivors;
   }
 
   function drawParticles(now){
     const survivors=[];
     ctx.save();
-    particles.forEach(p=>{
-      const elapsed=now-p.startTime-p.delay;
-      if(elapsed<0){ survivors.push(p); return; }
-      const t=elapsed/p.duration;
-      if(t>=1) return;
-      const ease=easeOutCubic(t);
-      const px=p.x+p.dx*ease, py=p.y+p.dy*ease;
-      const alpha = t<0.1 ? t/0.1 : 1-((t-0.1)/0.9);
-      const size=(1-0.8*t)*3;
-      ctx.globalAlpha=Math.max(0,alpha);
-      ctx.fillStyle=p.color;
-      ctx.shadowColor=p.color; ctx.shadowBlur=4;
-      ctx.beginPath(); ctx.arc(px,py,Math.max(0.5,size),0,Math.PI*2); ctx.fill();
-      survivors.push(p);
-    });
-    ctx.restore();
+    try{
+      particles.forEach(p=>{
+        const elapsed=now-p.startTime-p.delay;
+        if(elapsed<0){ survivors.push(p); return; }
+        const t=elapsed/p.duration;
+        if(t>=1) return;
+        const ease=easeOutCubic(t);
+        const px=p.x+p.dx*ease, py=p.y+p.dy*ease;
+        const alpha = t<0.1 ? t/0.1 : 1-((t-0.1)/0.9);
+        const size=(1-0.8*t)*3;
+        ctx.globalAlpha=Math.max(0,alpha);
+        ctx.fillStyle=p.color;
+        ctx.shadowColor=p.color; ctx.shadowBlur=4;
+        ctx.beginPath(); ctx.arc(px,py,Math.max(0.5,size),0,Math.PI*2); ctx.fill();
+        survivors.push(p);
+      });
+    } finally {
+      ctx.restore();
+    }
     particles=survivors;
   }
 
   function drawFloaters(now){
     const survivors=[];
     ctx.save();
-    ctx.textAlign='center';
-    floaters.forEach(f=>{
-      const t=(now-f.startTime)/f.duration;
-      if(t>=1) return;
-      const alphaIn=easeOutCubic(Math.min(1,t/0.12));
-      const alphaOut = t>0.85 ? Math.max(0,1-((t-0.85)/0.15)) : 1;
-      const alpha=Math.min(alphaIn,alphaOut);
-      const ly=f.y - t*60;
-      ctx.globalAlpha=Math.max(0,alpha);
-      let cursorY=ly;
-      if(f.points!==null && f.points!==undefined){
-        ctx.font="700 16px 'JetBrains Mono', monospace";
-        ctx.fillStyle=PALETTE.textPrimary;
-        ctx.shadowColor='rgba(0,0,0,.7)'; ctx.shadowBlur=6;
-        ctx.fillText('+'+f.points, f.x, cursorY);
-        cursorY+=16;
-      }
-      if(f.tierLabel){
-        ctx.font="700 12px 'Space Grotesk', sans-serif";
-        ctx.fillStyle=f.tierColor||PALETTE.textPrimary;
-        ctx.shadowColor='rgba(255,255,255,.4)'; ctx.shadowBlur=8;
-        ctx.fillText(f.tierLabel, f.x, cursorY);
-        cursorY+=14;
-      }
-      if(f.comboText){
-        ctx.font="700 11px 'Space Grotesk', sans-serif";
-        ctx.fillStyle=PALETTE.amber;
-        ctx.shadowBlur=0;
-        ctx.fillText(f.comboText, f.x, cursorY);
-      }
-      survivors.push(f);
-    });
-    ctx.restore();
+    try{
+      ctx.textAlign='center';
+      floaters.forEach(f=>{
+        const t=(now-f.startTime)/f.duration;
+        if(t>=1) return;
+        const alphaIn=easeOutCubic(Math.min(1,t/0.12));
+        const alphaOut = t>0.85 ? Math.max(0,1-((t-0.85)/0.15)) : 1;
+        const alpha=Math.min(alphaIn,alphaOut);
+        const ly=f.y - t*60;
+        ctx.globalAlpha=Math.max(0,alpha);
+        let cursorY=ly;
+        if(f.points!==null && f.points!==undefined){
+          ctx.font="700 16px 'JetBrains Mono', monospace";
+          ctx.fillStyle=PALETTE.textPrimary;
+          ctx.shadowColor='rgba(0,0,0,.7)'; ctx.shadowBlur=6;
+          ctx.fillText('+'+f.points, f.x, cursorY);
+          cursorY+=16;
+        }
+        if(f.tierLabel){
+          ctx.font="700 12px 'Space Grotesk', sans-serif";
+          ctx.fillStyle=f.tierColor||PALETTE.textPrimary;
+          ctx.shadowColor='rgba(255,255,255,.4)'; ctx.shadowBlur=8;
+          ctx.fillText(f.tierLabel, f.x, cursorY);
+          cursorY+=14;
+        }
+        if(f.comboText){
+          ctx.font="700 11px 'Space Grotesk', sans-serif";
+          ctx.fillStyle=PALETTE.amber;
+          ctx.shadowBlur=0;
+          ctx.fillText(f.comboText, f.x, cursorY);
+        }
+        survivors.push(f);
+      });
+    } finally {
+      ctx.restore();
+    }
     floaters=survivors;
   }
 
   function drawDragVisual(){
     if(!dragVisual) return;
     ctx.save();
-    ctx.strokeStyle=dragVisual.strokeColor;
-    ctx.lineWidth=3;
-    ctx.setLineDash([6,5]);
-    ctx.globalAlpha=0.85;
-    ctx.beginPath();
-    ctx.moveTo(dragVisual.originX,dragVisual.originY);
-    ctx.lineTo(dragVisual.endX,dragVisual.endY);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle=dragVisual.strokeColor;
-    ctx.shadowColor=dragVisual.strokeColor; ctx.shadowBlur=8;
-    ctx.beginPath(); ctx.arc(dragVisual.endX,dragVisual.endY,dragVisual.puckR,0,Math.PI*2); ctx.fill();
-    ctx.restore();
+    try{
+      ctx.strokeStyle=dragVisual.strokeColor;
+      ctx.lineWidth=3;
+      ctx.setLineDash([6,5]);
+      ctx.globalAlpha=0.85;
+      ctx.beginPath();
+      ctx.moveTo(dragVisual.originX,dragVisual.originY);
+      ctx.lineTo(dragVisual.endX,dragVisual.endY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle=dragVisual.strokeColor;
+      ctx.shadowColor=dragVisual.strokeColor; ctx.shadowBlur=8;
+      ctx.beginPath(); ctx.arc(dragVisual.endX,dragVisual.endY,dragVisual.puckR,0,Math.PI*2); ctx.fill();
+    } finally {
+      ctx.restore();
+    }
   }
 
   function drawWarningLine(){
     const {ch,rect}=cellMetrics();
     ctx.save();
-    ctx.setLineDash([6,5]);
-    ctx.strokeStyle=PALETTE.danger;
-    ctx.globalAlpha=0.5;
-    ctx.shadowColor=PALETTE.danger; ctx.shadowBlur=4;
-    ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(0,ch); ctx.lineTo(rect.width,ch); ctx.stroke();
-    ctx.restore();
+    try{
+      ctx.setLineDash([6,5]);
+      ctx.strokeStyle=PALETTE.danger;
+      ctx.globalAlpha=0.5;
+      ctx.shadowColor=PALETTE.danger; ctx.shadowBlur=4;
+      ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(0,ch); ctx.lineTo(rect.width,ch); ctx.stroke();
+    } finally {
+      ctx.restore();
+    }
   }
 
   function renderFrame(now){
@@ -2021,6 +2104,18 @@
       drawParticles(now);
       drawFloaters(now);
       drawDragVisual();
+    }
+    // Sanity net for the save/restore-leak class of bug: every draw* function
+    // above is supposed to leave the stack exactly where it found it. If it
+    // doesn't, every draw call for the rest of the session runs on top of
+    // whatever state leaked (usually a stale globalAlpha), rendering orbs
+    // invisible until the next canvas.width/height reset. Catch it the
+    // instant it happens instead of needing another round of screenshot
+    // archaeology.
+    if(ctxSaveDepth!==0){
+      ctxSaveImbalances++;
+      console.error('[renderFrame] ctx save/restore imbalance: depth='+ctxSaveDepth+' (expected 0), total imbalances this session='+ctxSaveImbalances);
+      ctxSaveDepth=0; // don't let one bad frame cascade into every future frame
     }
     // Only actively-playing frames (no overlay showing) need to keep
     // rescheduling — otherwise this would repaint under the overlay's
@@ -2119,6 +2214,8 @@
     get COLS(){ return COLS; },
     get ROWS(){ return ROWS; },
     get stageIndex(){ return stageIndex; },
+    get ctxSaveDepth(){ return ctxSaveDepth; },
+    get ctxSaveImbalances(){ return ctxSaveImbalances; },
     cellMetrics,
     setCell(r,c,cell){ grid[r][c]=cell; },
     perfStats
@@ -2198,7 +2295,8 @@
       panel.textContent=
         'FPS '+fps.toFixed(0)+'  worst '+worst.toFixed(0)+'ms\n'+
         'Grid '+COLS+'x'+(ROWS+1)+'  cells '+countFilled()+'\n'+
-        'long tasks: '+logLines;
+        'long tasks: '+logLines+'\n'+
+        'save/restore leaks: '+ctxSaveImbalances;
     }
 
     function debugFrame(now){
