@@ -584,6 +584,11 @@
   const __ctxRestore=ctx.restore.bind(ctx);
   ctx.save=function(){ ctxSaveDepth++; return __ctxSave(); };
   ctx.restore=function(){ ctxSaveDepth--; return __ctxRestore(); };
+  // Latest [growGrid]/[sprite-rebuild] summaries, mirrored onto the on-screen
+  // debug panel below since the device this bug shows up on has no Web
+  // Inspector — console.log alone is unreadable there.
+  let lastGrowGridInfo=null;
+  let lastSpriteRebuildInfo=null;
   const dangerGlow=document.getElementById('dangerGlow');
   const surgeBtn=document.getElementById('surgeBtn');
   const scoreVal=document.getElementById('scoreVal');
@@ -1463,6 +1468,7 @@
 
   function growGrid(silent){
     const oldCols=COLS, oldRows=ROWS, oldGrid=grid;
+    const prevRefRadius=orbSpriteRefRadius, prevDpr=orbSpriteDpr;
     COLS=oldCols+1; ROWS=oldRows+1;
     const next=Array.from({length:ROWS+1},()=>Array(COLS).fill(null));
     for(let r=0;r<=oldRows;r++){
@@ -1476,11 +1482,11 @@
     // single-threaded — growGrid() only ever runs as its own top-level task
     // via finalizeClear()'s setTimeout, never nested inside a rAF/drawGrid
     // call), so there's no frame where the new-size grid array can be drawn
-    // against a not-yet-resized canvas, or vice versa. Logged anyway so a
-    // field report can confirm that instead of relying on this comment.
-    console.log('[growGrid] '+oldCols+'x'+(oldRows+1)+' -> '+COLS+'x'+(ROWS+1)+
-      ' gridArray='+grid.length+'x'+grid[0].length+' (before resizeCanvas)');
-    resizeCanvas('growGrid');
+    // against a not-yet-resized canvas, or vice versa.
+    resizeCanvas('growGrid'); // also rebuilds/verifies sprites — sets lastSpriteRebuildInfo
+    lastGrowGridInfo='grid '+oldCols+'x'+(oldRows+1)+' -> '+COLS+'x'+(ROWS+1)+
+      '  refRadius '+prevRefRadius+'->'+orbSpriteRefRadius+'  dpr '+prevDpr+'->'+orbSpriteDpr;
+    console.log('[growGrid] '+lastGrowGridInfo);
     if(!silent){ flashExpand(); playExpand(); }
   }
 
@@ -1820,6 +1826,8 @@
       if(sprite) ok++; else failed.push(cell.type+':'+(cell.color||cell.radius||''));
     });
     const cleared = prevRefRadius!==orbSpriteRefRadius || prevDpr!==orbSpriteDpr;
+    lastSpriteRebuildInfo=context+': '+ok+'/'+variants.length+
+      (failed.length?' — '+failed.join(', ')+' failed':' ok');
     console.log('[sprite-rebuild] '+context+' refRadius '+prevRefRadius+'->'+orbSpriteRefRadius+
       ' dpr '+prevDpr+'->'+orbSpriteDpr+' cacheCleared='+cleared+
       ' rebuilt='+ok+'/'+variants.length+(failed.length?' FAILED=['+failed.join(',')+']':''));
@@ -2296,7 +2304,9 @@
         'FPS '+fps.toFixed(0)+'  worst '+worst.toFixed(0)+'ms\n'+
         'Grid '+COLS+'x'+(ROWS+1)+'  cells '+countFilled()+'\n'+
         'long tasks: '+logLines+'\n'+
-        'save/restore leaks: '+ctxSaveImbalances;
+        'save/restore leaks: '+ctxSaveImbalances+'\n'+
+        'last resize: '+(lastGrowGridInfo||'(none yet)')+'\n'+
+        'sprite rebuild: '+(lastSpriteRebuildInfo||'(none yet)');
     }
 
     function debugFrame(now){
