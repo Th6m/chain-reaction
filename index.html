@@ -1603,15 +1603,26 @@
     } else if(cell.type==='prism'){
       c.shadowColor='rgba(255,255,255,.55)'; c.shadowBlur=10;
       c.beginPath(); c.arc(cx,cy,radius,0,Math.PI*2);
+      // Feature-detecting createConicGradient's existence isn't enough — some
+      // WebKit builds expose it but throw when it's actually called. Always
+      // try it live and fall back on catch, not just on missing support.
+      let conicGrad=null;
       if(SUPPORTS_CONIC){
-        const grad=c.createConicGradient(0,cx,cy);
-        grad.addColorStop(0,PALETTE.coral);
-        grad.addColorStop(0.2,PALETTE.amber);
-        grad.addColorStop(0.4,PALETTE.lime);
-        grad.addColorStop(0.6,PALETTE.teal);
-        grad.addColorStop(0.8,PALETTE.violet);
-        grad.addColorStop(1,PALETTE.coral);
-        c.fillStyle=grad;
+        try{
+          conicGrad=c.createConicGradient(0,cx,cy);
+          conicGrad.addColorStop(0,PALETTE.coral);
+          conicGrad.addColorStop(0.2,PALETTE.amber);
+          conicGrad.addColorStop(0.4,PALETTE.lime);
+          conicGrad.addColorStop(0.6,PALETTE.teal);
+          conicGrad.addColorStop(0.8,PALETTE.violet);
+          conicGrad.addColorStop(1,PALETTE.coral);
+        } catch(err){
+          console.error('[orb-sprite] createConicGradient threw at call time (falling back to radial prism gradient):', err);
+          conicGrad=null;
+        }
+      }
+      if(conicGrad){
+        c.fillStyle=conicGrad;
       } else {
         const grad=c.createRadialGradient(cx,cy,0,cx,cy,radius);
         grad.addColorStop(0,'#ffffff');
@@ -1665,6 +1676,11 @@
   let orbSpriteRefRadius=-1;
   let orbSpriteDpr=-1;
 
+  // One variant failing to build (e.g. a WebKit gradient bug) must not take
+  // the other 8 down with it, and a failed build must never get cached as a
+  // permanent blank — it just retries on the next frame. Errors are logged
+  // loudly (variant/radius/dpr + the real error) so a field report alone is
+  // enough to diagnose a recurrence without another cable-and-inspector session.
   function getOrbSprite(cell, refRadius){
     const rr=Math.max(1,Math.round(refRadius));
     if(rr!==orbSpriteRefRadius || dpr!==orbSpriteDpr){
@@ -1676,7 +1692,8 @@
       : cell.type==='prism' ? 'p'
       : ('b:'+(cell.radius||1));
     let sprite=orbSpriteCache.get(variant);
-    if(!sprite){
+    if(sprite) return sprite;
+    try{
       const pad=Math.ceil(rr*0.35)+14;
       const size=Math.ceil((rr+pad)*2);
       const off=document.createElement('canvas');
@@ -1686,15 +1703,47 @@
       drawOrbCore(octx, cell, size/2, size/2, rr);
       sprite={canvas:off, size, refRadius:rr};
       orbSpriteCache.set(variant, sprite);
+      return sprite;
+    } catch(err){
+      console.error('[orb-sprite] sprite build failed — variant='+variant+' refRadius='+rr+' dpr='+dpr+':', err);
+      return null;
     }
-    return sprite;
+  }
+
+  // Flat-fill fallback used whenever sprite generation or drawImage fails,
+  // so a broken orb is a visible colored dot instead of nothing at all.
+  function drawOrbPlaceholder(cell, cx, cy, radius){
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx,cy,radius,0,Math.PI*2);
+    ctx.fillStyle = cell && cell.type==='normal' ? (colorHexFor(cell.color)||'#ff3b4e')
+      : cell && cell.type==='prism' ? PALETTE.violet
+      : cell && cell.type==='bomb' ? PALETTE.bombCore
+      : '#ff3b4e';
+    ctx.fill();
+    ctx.restore();
   }
 
   function drawOrb(cell, cx, cy, radius, now, refRadius){
-    const sprite=getOrbSprite(cell, refRadius||radius);
-    const scale=radius/sprite.refRadius;
-    const half=sprite.size/2*scale;
-    ctx.drawImage(sprite.canvas, cx-half, cy-half, half*2, half*2);
+    let sprite=null;
+    try{
+      sprite=getOrbSprite(cell, refRadius||radius);
+    } catch(err){
+      console.error('[orb-sprite] getOrbSprite threw for cell', cell, 'radius', refRadius||radius, err);
+    }
+    if(!sprite){
+      drawOrbPlaceholder(cell, cx, cy, radius);
+      return;
+    }
+    try{
+      const scale=radius/sprite.refRadius;
+      const half=sprite.size/2*scale;
+      ctx.drawImage(sprite.canvas, cx-half, cy-half, half*2, half*2);
+    } catch(err){
+      console.error('[orb-sprite] drawImage failed for cell', cell, err);
+      drawOrbPlaceholder(cell, cx, cy, radius);
+      return;
+    }
     if(cell.type==='bomb') drawBombGlyph(cell, cx, cy, radius, now);
   }
 
@@ -1713,8 +1762,9 @@
 
     for(let r=0;r<ROWS+1;r++){
       for(let c=0;c<COLS;c++){
-        const key=r+'_'+c;
         const cx=c*cw+cw/2, cy=r*ch+ch/2;
+        try{
+        const key=r+'_'+c;
 
         // buffer-row faint tint (row 0)
         if(r===0){
@@ -1779,6 +1829,13 @@
         } else if(previewKeys.has(key)){
           const ringColor = previewClassUsed==='preview-blast' ? PALETTE.bombSpark : 'rgba(255,255,255,.95)';
           drawRing(cx,cy+offsetY,baseRadius*1.08,ringColor,3,8);
+        }
+        } catch(err){
+          // One bad cell must not blank the rest of the frame — log loudly
+          // (row/col + real error, diagnosable from a field bug report alone)
+          // and draw a visible placeholder instead of leaving it empty.
+          console.error('[drawGrid] cell r='+r+' c='+c+' failed to draw:', err);
+          try{ drawOrbPlaceholder(null, cx, cy, baseRadius); }catch(e2){ /* give up silently for this cell */ }
         }
       }
     }
