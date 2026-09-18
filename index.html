@@ -14,6 +14,20 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Chain Reaction">
+<script>
+  // Coarse pointer + real touch points, not user-agent sniffing — a
+  // touchscreen laptop (fine-capable mouse/trackpad alongside touch)
+  // should stay on the desktop animation path. Runs synchronously before
+  // first paint so there's no flash of infinite animation before the
+  // bounded mobile variant takes over.
+  (function(){
+    try{
+      var coarse = window.matchMedia && (matchMedia('(pointer: coarse)').matches || matchMedia('(hover: none)').matches);
+      var hasTouch = (navigator.maxTouchPoints||0) > 0;
+      if(coarse && hasTouch){ document.documentElement.classList.add('is-mobile'); }
+    }catch(e){ /* matchMedia unavailable — stay on desktop path */ }
+  })();
+</script>
 <style>
   :root{
     --bg:#0B0E16;
@@ -33,7 +47,14 @@
     --font-display:'Space Grotesk',sans-serif;
     --font-body:'Inter',sans-serif;
     --font-mono:'JetBrains Mono',monospace;
+    --overlay-blur:6px;
   }
+  /* Continuously repainting the infinite spin/pulse/danger animations
+     behind backdrop-filter is expensive on iOS Safari (proven: stalls
+     persisted on the game-over screen with zero game logic running).
+     Mobile gets bounded animations that settle on a static end state
+     and a lighter blur; desktop is untouched. */
+  .is-mobile{ --overlay-blur:2.5px; }
 
   *{ box-sizing:border-box; }
   html,body{ height:100%; }
@@ -166,6 +187,11 @@
     0%,100%{ opacity:.55; }
     50%{ opacity:1; }
   }
+  @keyframes dangerPulseSettle{
+    0%{ opacity:.55; }
+    100%{ opacity:1; }
+  }
+  .is-mobile .danger-glow.active{ animation:dangerPulseSettle 1.3s ease-in-out 3 forwards; }
 
   #gameCanvas{
     position:relative;
@@ -303,7 +329,7 @@
     position:fixed;
     inset:0;
     background:rgba(6,8,13,.82);
-    backdrop-filter:blur(6px);
+    backdrop-filter:blur(var(--overlay-blur));
     display:flex;
     align-items:center;
     justify-content:center;
@@ -401,6 +427,13 @@
     0%,100%{ box-shadow:0 0 30px -8px var(--accent-teal); }
     50%{ box-shadow:0 0 55px 0px var(--accent-violet); }
   }
+  @keyframes pulseGlowSettle{
+    0%{ box-shadow:0 0 30px -8px var(--accent-teal); }
+    100%{ box-shadow:0 0 55px 0px var(--accent-violet); }
+  }
+  .is-mobile .orb-button{
+    animation:spin 6s linear 3, pulseGlowSettle 2.4s ease-in-out 3 forwards;
+  }
 
   @media (prefers-reduced-motion: reduce){
     .stage, .expand-flash, .danger-glow, .orb-button{
@@ -415,7 +448,7 @@
 <div class="app">
 
   <header class="topbar">
-    <div class="brand"><span class="brand-mark">◆</span>CHAIN REACTION</div>
+    <div class="brand" id="brandTitle"><span class="brand-mark">◆</span>CHAIN REACTION</div>
     <div class="topbar-right">
       <div class="stats">
         <div class="stat">
@@ -453,7 +486,7 @@
   </main>
 
   <div class="legend">
-    <span class="legend-item"><i class="chip bomb-chip"></i>Blast — tap to pop it alone, drag to chain-detonate nearby</span>
+    <span class="legend-item"><i class="chip bomb-chip"></i>Blast — tap to detonate, chains into anything caught in the blast</span>
     <span class="legend-item"><i class="chip prism-chip"></i>Prism — tap to auto-bond, drag toward a colour to choose it</span>
   </div>
 
@@ -462,7 +495,7 @@
       <h1>CHAIN REACTION</h1>
       <p class="tagline">Pop the pattern. Chase the cascade.</p>
       <button class="orb-button" id="startBtn" aria-label="Start game"></button>
-      <p class="hint">Click groups of 2+ matching orbs to trigger a chain — longer chains score far more.<br>Chains of 5+ trigger bonus rewards: 6 gifts a free prism, 7+ gifts a free bomb.<br>Drag blast and prism orbs to aim them.<br>The dashed line marks the danger zone — it's only over when a column overflows above it. Tap ⚡ to skip the wait for the next surge.</p>
+      <p class="hint">Click groups of 2+ matching orbs to trigger a chain — longer chains score far more.<br>Chains of 5+ trigger bonus rewards: 6 gifts a free prism, 7+ gifts a free bomb.<br>Drag prism orbs to aim them.<br>The dashed line marks the danger zone — it's only over when a column overflows above it. Tap ⚡ to skip the wait for the next surge.</p>
     </div>
   </div>
 
@@ -569,13 +602,20 @@
   let lastSurgeAt=0;
   const SURGE_COOLDOWN=400;
 
+  /* ---------- per-gesture input caches ----------
+     cellMetrics()/getBoundingClientRect() is only safe to reuse for the
+     duration of a single gesture (see resizeCanvas invalidation below);
+     pointermove is coalesced to run at most once per animation frame. */
+  let gestureMetrics=null;       // {cw,ch,rect} captured on pointerdown
+  let prismDragState=null;       // {aiming,dr,dc} — last state that triggered a prism preview recompute
+  let pendingPointerEvent=null;
+  let pointerMoveRafId=null;
+
   /* ---------- render-only state (never read by game logic) ---------- */
   let dpr=1;
   let popEffects=new Map();      // key -> {startTime, delay, duration, cell:{type,color,radius}}
   let dropInEffects=new Map();   // key -> {startTime, duration}
   let nudgeEffects=new Map();    // key -> {startTime, duration}
-  let armedKey=null;             // "r_c" or null
-  let armedStartTime=0;
   let grabbedKey=null;
   let previewKeys=new Set();
   let previewClassUsed=null;
@@ -643,10 +683,6 @@
     tone({freq,dur:0.16,type:'triangle',gain:0.13,delay:depth*STEP_MS/1000,attack:0.004});
   }
 
-  function playBombFizzle(){
-    tone({freq:520,freqEnd:180,dur:0.14,type:'triangle',gain:0.14,delay:0});
-  }
-
   function playBombBoom(delay, radius){
     const scale=1+((radius||1)-1)*0.35;
     noiseBurst({dur:0.3*scale, gain:Math.min(0.26*scale,0.42), delay, filterFreq:1100/scale});
@@ -674,10 +710,6 @@
 
   function playUIClick(){
     tone({freq:520,dur:0.06,type:'square',gain:0.07,delay:0});
-  }
-
-  function playDragTick(){
-    tone({freq:700,dur:0.03,type:'sine',gain:0.03,delay:0});
   }
 
   function playTierSound(tier){
@@ -763,6 +795,8 @@
     canvas.width=Math.round(w*dpr);
     canvas.height=Math.round(h*dpr);
     ctx.setTransform(dpr,0,0,dpr,0,0);
+    // Board dimensions changed — any gesture-cached metrics are stale.
+    gestureMetrics=null;
   }
 
   let resizeQueued=false;
@@ -988,18 +1022,6 @@
   }
   function shakeCell(r,c){ triggerNudge(r,c); }
 
-  function setArmed(r,c,on){
-    const key=r+'_'+c;
-    if(on){
-      if(armedKey===key) return;
-      armedKey=key; armedStartTime=performance.now();
-      playDragTick();
-    } else if(armedKey===key){
-      armedKey=null;
-    }
-  }
-  function clearArmed(){ armedKey=null; }
-
   function setPreviewGroup(cells, className){
     previewKeys=new Set(cells.map(([r,c])=>r+'_'+c));
     previewClassUsed=className;
@@ -1038,8 +1060,8 @@
     return dy>=0 ? {dr:1,dc:0} : {dr:-1,dc:0};
   }
 
-  function cellFromPoint(clientX,clientY){
-    const {cw,ch,rect}=cellMetrics();
+  function cellFromPoint(clientX,clientY,metrics){
+    const {cw,ch,rect}=metrics||cellMetrics();
     const x=clientX-rect.left, y=clientY-rect.top;
     if(x<0||y<0||x>=rect.width||y>=rect.height) return null;
     const c=Math.floor(x/cw), r=Math.floor(y/ch);
@@ -1050,7 +1072,7 @@
   function handleTap(r,c){
     const cell=grid[r] && grid[r][c];
     if(!cell) return;
-    if(cell.type==='bomb'){ resolveBombTap(r,c); return; }
+    if(cell.type==='bomb'){ resolveBomb(r,c); return; }
     if(cell.type==='prism'){ resolvePrismTap(r,c); return; }
     const {group,edges,depths}=floodFill(r,c,cell.color);
     if(group.length<2) shakeCell(r,c);
@@ -1060,7 +1082,10 @@
   function handleDrag(r,c,dx,dy){
     const cell=grid[r] && grid[r][c];
     if(!cell) return;
-    if(cell.type==='bomb'){ resolveBombDrag(r,c); return; }
+    // Bombs always resolve the same way regardless of gesture — there's
+    // no drag target to aim at, since the blast is centered on the
+    // bomb's own cell either way.
+    if(cell.type==='bomb'){ resolveBomb(r,c); return; }
     if(cell.type==='prism'){ resolvePrismDrag(r,c, primaryDirection(dx,dy)); return; }
     const {group,edges,depths}=floodFill(r,c,cell.color);
     if(group.length<2) shakeCell(r,c);
@@ -1070,21 +1095,34 @@
   function updatePreview(r,c,dx,dy){
     const cellVal=grid[r] && grid[r][c];
     if(!cellVal){ clearPreviewGroup(); return; }
-    const dist=Math.hypot(dx,dy);
 
     if(cellVal.type==='bomb'){
-      if(dist>=DRAG_THRESHOLD){
+      // The blast is always centered on the bomb's own cell — dragging
+      // never aims it — so compute the full chain once on pointerdown
+      // (dx=dy=0) and hold it static for the rest of the gesture instead
+      // of re-running computeBombChain on every pointermove.
+      if(dx===0 && dy===0){
         const {group}=computeBombChain(r,c);
         setPreviewGroup(group,'preview-blast');
-      } else {
-        setPreviewGroup([[r,c]],'preview-blast');
       }
       return;
     }
 
     if(cellVal.type==='prism'){
-      if(dist>=DRAG_SHOW_THRESHOLD){
-        const dir=primaryDirection(dx,dy);
+      const dist=Math.hypot(dx,dy);
+      const aiming=dist>=DRAG_SHOW_THRESHOLD;
+      const dir=aiming?primaryDirection(dx,dy):null;
+      // floodFill/bestPrismChain below are the expensive part of a prism
+      // drag preview; only rerun them when the aim direction or the
+      // aiming/auto threshold band actually changed since the last
+      // processed move of this gesture. The drag line/puck itself still
+      // tracks the pointer every frame regardless (see computeDragVisual).
+      const changed = !prismDragState || prismDragState.aiming!==aiming ||
+        (aiming && (prismDragState.dr!==dir.dr || prismDragState.dc!==dir.dc));
+      if(!changed) return;
+      prismDragState = aiming ? {aiming, dr:dir.dr, dc:dir.dc} : {aiming};
+
+      if(aiming){
         const nr=r+dir.dr, nc=c+dir.dc;
         let targetColor=null;
         if(nr>=0&&nr<=ROWS&&nc>=0&&nc<COLS){
@@ -1109,7 +1147,7 @@
   }
 
   function computeDragVisual(r,c,dx,dy,cellVal){
-    const {cw,ch}=cellMetrics();
+    const {cw,ch}=gestureMetrics||cellMetrics();
     const originX=c*cw+cw/2, originY=r*ch+ch/2;
     const dist=Math.hypot(dx,dy);
     const maxReach=Math.min(cw,ch)*1.25;
@@ -1120,11 +1158,7 @@
       return {x:originX+Math.cos(angle)*clamped, y:originY+Math.sin(angle)*clamped};
     };
 
-    if(cellVal.type==='bomb'){
-      strokeColor=PALETTE.bombSpark;
-      const p=freeFollow(); endX=p.x; endY=p.y;
-      setArmed(r,c, dist>=DRAG_THRESHOLD);
-    } else if(cellVal.type==='prism'){
+    if(cellVal.type==='prism'){
       const dir=primaryDirection(dx,dy);
       const nr=r+dir.dr, nc=c+dir.dc;
       let targetColor=null;
@@ -1146,35 +1180,62 @@
     return {originX,originY,endX,endY,strokeColor,puckR:Math.max(4,Math.min(cw,ch)*0.13)};
   }
 
+  function cancelPendingPointerMove(){
+    if(pointerMoveRafId!=null){ cancelAnimationFrame(pointerMoveRafId); pointerMoveRafId=null; }
+    pendingPointerEvent=null;
+  }
+
   function cancelPointerGesture(){
     grabbedKey=null;
     pointerStart=null;
     dragVisual=null;
-    clearArmed();
     clearPreviewGroup();
+    cancelPendingPointerMove();
+    gestureMetrics=null;
+    prismDragState=null;
   }
 
   canvas.addEventListener('pointerdown', e=>{
     if(!gameActive||isResolving||paused) return;
-    const hit=cellFromPoint(e.clientX,e.clientY);
+    const metrics=cellMetrics();
+    const hit=cellFromPoint(e.clientX,e.clientY,metrics);
     if(!hit) return;
     const {r,c}=hit;
     if(!grid[r][c]) return;
     e.preventDefault();
+    // Cache metrics for the rest of this gesture — see resizeCanvas for
+    // the only place that invalidates it mid-gesture.
+    gestureMetrics=metrics;
+    prismDragState=null;
     pointerStart={ r, c, x:e.clientX, y:e.clientY };
     grabbedKey=r+'_'+c;
     updatePreview(r,c,0,0);
   });
 
-  window.addEventListener('pointermove', e=>{
-    if(!pointerStart) return;
+  function processPointerMove(){
+    pointerMoveRafId=null;
+    const e=pendingPointerEvent;
+    pendingPointerEvent=null;
+    if(!pointerStart || !e) return;
     const {r,c,x,y}=pointerStart;
     const cellVal=grid[r] && grid[r][c];
     if(!cellVal){ dragVisual=null; clearPreviewGroup(); return; }
     const dx=e.clientX-x, dy=e.clientY-y;
     updatePreview(r,c,dx,dy);
-    if(Math.hypot(dx,dy)<DRAG_SHOW_THRESHOLD){ dragVisual=null; return; }
+    // Bombs resolve immediately on tap/drag release and are never aimed,
+    // so there's nothing to show a drag line/puck toward.
+    if(cellVal.type==='bomb' || Math.hypot(dx,dy)<DRAG_SHOW_THRESHOLD){ dragVisual=null; return; }
     dragVisual=computeDragVisual(r,c,dx,dy,cellVal);
+  }
+
+  window.addEventListener('pointermove', e=>{
+    if(!pointerStart) return;
+    // Coalesce raw pointermove events down to one processed update per
+    // animation frame — a fast mouse/touch can fire far more of these
+    // than the screen can redraw.
+    pendingPointerEvent=e;
+    if(pointerMoveRafId!=null) return;
+    pointerMoveRafId=requestAnimationFrame(processPointerMove);
   });
 
   window.addEventListener('pointerup', e=>{
@@ -1183,8 +1244,10 @@
     pointerStart=null;
     grabbedKey=null;
     dragVisual=null;
-    clearArmed();
     clearPreviewGroup();
+    cancelPendingPointerMove();
+    gestureMetrics=null;
+    prismDragState=null;
     if(!gameActive||isResolving||paused) return;
     const dx=e.clientX-x, dy=e.clientY-y;
     const isDrag=Math.hypot(dx,dy)>=DRAG_THRESHOLD;
@@ -1211,17 +1274,14 @@
     resolveGroup(group,edges,depths,'chain',r,c);
   }
 
-  /* ================= Bomb ================= */
-  function resolveBombTap(r,c){
-    const group=[[r,c]];
-    const depths={[r+'_'+c]:0};
-    resolveGroup(group,[],depths,'bomb',r,c,{fizzle:true, centers:[0]});
-  }
-
-  function resolveBombDrag(r,c){
+  /* ================= Bomb =================
+     Any tap or drag detonates the full blast — there's no aiming to do
+     since the blast is always centered on the bomb's own cell, so tap
+     and drag resolve identically. */
+  function resolveBomb(r,c){
     const {group,edges,depths,centers,triggeredChains}=computeBombChain(r,c);
     const originRadius=(grid[r][c] && grid[r][c].radius) || 1;
-    resolveGroup(group,edges,depths,'bomb',r,c,{fizzle:false, centers, radius:originRadius, triggeredChains});
+    resolveGroup(group,edges,depths,'bomb',r,c,{centers, radius:originRadius, triggeredChains});
   }
 
   /* ================= Resolution ================= */
@@ -1309,12 +1369,9 @@
     };
 
     if(kind==='bomb'){
-      if(extra && extra.fizzle) playBombFizzle();
-      else{
-        const centers=(extra && extra.centers) ? extra.centers : [0];
-        const bombRadius=(extra && extra.radius) || 1;
-        centers.forEach(d=> playBombBoom(d*STEP_MS/1000, bombRadius));
-      }
+      const centers=(extra && extra.centers) ? extra.centers : [0];
+      const bombRadius=(extra && extra.radius) || 1;
+      centers.forEach(d=> playBombBoom(d*STEP_MS/1000, bombRadius));
     }
 
     group.forEach(([r,c])=>{
@@ -1469,6 +1526,7 @@
     spawnAt+=pausedDuration;
     if(lastPopTime>0) lastPopTime+=pausedDuration;
     paused=false;
+    ensureRenderLoop();
     pauseOverlay.classList.add('hidden');
   }
 
@@ -1531,7 +1589,7 @@
     score=0; combo=0; lastPopTime=0; currentComboWindow=comboWindowFor(1); isResolving=false; paused=false;
     popEffects.clear(); dropInEffects.clear(); nudgeEffects.clear();
     particles=[]; sparkLines=[]; floaters=[]; dragVisual=null;
-    armedKey=null; grabbedKey=null; clearPreviewGroup();
+    grabbedKey=null; clearPreviewGroup();
     scoreVal.textContent='000000';
     comboLabel.textContent='';
     comboFill.style.transition='none';
@@ -1539,6 +1597,7 @@
     spawnFill.style.width='100%';
     startTime=Date.now();
     gameActive=true;
+    ensureRenderLoop();
     updatePauseVisibility();
     startOverlay.classList.add('hidden');
     pauseOverlay.classList.add('hidden');
@@ -1822,11 +1881,7 @@
         drawOrb(cell, cx, cy+offsetY, baseRadius*scale, now, baseRadius);
         ctx.restore();
 
-        if(armedKey===key){
-          const phase=((now-armedStartTime)%500)/500;
-          const pulse=1+0.1*Math.sin(phase*Math.PI*2);
-          drawRing(cx,cy+offsetY,(baseRadius+4)*pulse,PALETTE.danger,3,10);
-        } else if(previewKeys.has(key)){
+        if(previewKeys.has(key)){
           const ringColor = previewClassUsed==='preview-blast' ? PALETTE.bombSpark : 'rgba(255,255,255,.95)';
           drawRing(cx,cy+offsetY,baseRadius*1.08,ringColor,3,8);
         }
@@ -1957,16 +2012,31 @@
   }
 
   function renderFrame(now){
-    rafId=requestAnimationFrame(renderFrame);
     const rect=canvas.getBoundingClientRect();
     ctx.clearRect(0,0,rect.width,rect.height);
-    if(!grid) return;
-    drawWarningLine();
-    drawGrid(now);
-    drawSparkLines(now);
-    drawParticles(now);
-    drawFloaters(now);
-    drawDragVisual();
+    if(grid){
+      drawWarningLine();
+      drawGrid(now);
+      drawSparkLines(now);
+      drawParticles(now);
+      drawFloaters(now);
+      drawDragVisual();
+    }
+    // Only actively-playing frames (no overlay showing) need to keep
+    // rescheduling — otherwise this would repaint under the overlay's
+    // blur forever while sitting idle on the start/pause/game-over
+    // screens, the same expensive-blur problem the CSS animations have.
+    // The loop self-stops here and is restarted by ensureRenderLoop()
+    // wherever play (re)starts.
+    if(gameActive && !paused){
+      rafId=requestAnimationFrame(renderFrame);
+    } else {
+      rafId=null;
+    }
+  }
+
+  function ensureRenderLoop(){
+    if(rafId==null){ rafId=requestAnimationFrame(renderFrame); }
   }
 
   /* ================= Debug / profiling instrumentation =================
@@ -2053,6 +2123,134 @@
     setCell(r,c,cell){ grid[r][c]=cell; },
     perfStats
   };
+
+  /* ================= TEMPORARY DEBUG OVERLAY — safe to delete =================
+     5-tap-the-brand-title toggle for an on-screen perf panel, since this
+     device (iPhone) has no Mac / Web Inspector to profile with. Shows a
+     rolling FPS + worst frame time, board size/fill, and a long-task log.
+     iOS Safari has no `longtask` PerformanceObserver entry type at all, so
+     on browsers without it we fall back to flagging >50ms gaps between
+     animation frames instead (marked with a leading ~ since that's an
+     approximation, not a true long-task measurement). Runs its own rAF
+     loop, independent of the game's render loop, so it keeps measuring
+     even while the game render loop is stopped (idle on an overlay) —
+     that independence is what makes it able to confirm the idle fix
+     actually worked. Zero overhead when toggled off: no rAF, no observer,
+     panel not in the layout (display:none). */
+  (function(){
+    const TAP_WINDOW_MS=3000, TAPS_NEEDED=5;
+    let tapTimes=[];
+    let debugOn=false;
+    let debugRafId=null;
+    let lastFrameTime=null;
+    let frameTimes=[];
+    const FRAME_WINDOW=60;
+    let longTaskLog=[];
+    const LOG_MAX=8;
+    let longTaskObserver=null;
+    let lastPanelUpdate=0;
+    const supportsLongTask = typeof PerformanceObserver!=='undefined' &&
+      PerformanceObserver.supportedEntryTypes &&
+      PerformanceObserver.supportedEntryTypes.includes('longtask');
+
+    const panel=document.createElement('div');
+    panel.id='debugPanel';
+    panel.style.cssText='position:fixed;bottom:8px;left:8px;z-index:9999;pointer-events:none;'+
+      'background:rgba(0,0,0,.74);color:#5CFF7A;font:10px/1.45 "JetBrains Mono",monospace;'+
+      'padding:8px 10px;border-radius:6px;max-width:220px;white-space:pre-wrap;display:none;';
+    document.body.appendChild(panel);
+
+    const toast=document.createElement('div');
+    toast.style.cssText='position:fixed;bottom:70px;left:50%;transform:translateX(-50%);'+
+      'z-index:9999;pointer-events:none;background:rgba(0,0,0,.82);color:#fff;'+
+      'font:12px/1.4 sans-serif;padding:8px 16px;border-radius:20px;opacity:0;'+
+      'transition:opacity .25s ease;';
+    document.body.appendChild(toast);
+    let toastTimer=null;
+    function showToast(msg){
+      toast.textContent=msg;
+      toast.style.opacity='1';
+      clearTimeout(toastTimer);
+      toastTimer=setTimeout(()=>{ toast.style.opacity='0'; },1500);
+    }
+
+    function logLongTask(ms,approx){
+      longTaskLog.push({ms,approx});
+      if(longTaskLog.length>LOG_MAX) longTaskLog.shift();
+    }
+
+    function countFilled(){
+      if(!grid) return 0;
+      let n=0;
+      for(let r=0;r<grid.length;r++){ for(let c=0;c<grid[r].length;c++){ if(grid[r][c]) n++; } }
+      return n;
+    }
+
+    function renderPanel(now){
+      if(now-lastPanelUpdate<200) return; // throttle DOM writes so the panel itself doesn't skew the measurement
+      lastPanelUpdate=now;
+      const avgDt=frameTimes.length ? frameTimes.reduce((a,b)=>a+b,0)/frameTimes.length : 0;
+      const fps=avgDt>0 ? 1000/avgDt : 0;
+      const worst=frameTimes.length ? Math.max.apply(null,frameTimes) : 0;
+      const logLines=longTaskLog.length
+        ? longTaskLog.slice(-5).reverse().map(e=>(e.approx?'~':'')+e.ms.toFixed(0)+'ms').join('  ')
+        : '(none)';
+      panel.textContent=
+        'FPS '+fps.toFixed(0)+'  worst '+worst.toFixed(0)+'ms\n'+
+        'Grid '+COLS+'x'+(ROWS+1)+'  cells '+countFilled()+'\n'+
+        'long tasks: '+logLines;
+    }
+
+    function debugFrame(now){
+      debugRafId=requestAnimationFrame(debugFrame);
+      if(lastFrameTime!=null){
+        const dt=now-lastFrameTime;
+        frameTimes.push(dt);
+        if(frameTimes.length>FRAME_WINDOW) frameTimes.shift();
+        if(!supportsLongTask && dt>50){ logLongTask(dt,true); }
+      }
+      lastFrameTime=now;
+      renderPanel(now);
+    }
+
+    function startDebug(){
+      debugOn=true;
+      frameTimes=[]; lastFrameTime=null; longTaskLog=[]; lastPanelUpdate=0;
+      panel.style.display='block';
+      if(supportsLongTask){
+        try{
+          longTaskObserver=new PerformanceObserver(list=>{
+            list.getEntries().forEach(entry=>logLongTask(entry.duration,false));
+          });
+          longTaskObserver.observe({entryTypes:['longtask']});
+        }catch(e){ longTaskObserver=null; }
+      }
+      debugRafId=requestAnimationFrame(debugFrame);
+      showToast('Debug overlay ON');
+    }
+
+    function stopDebug(){
+      debugOn=false;
+      panel.style.display='none';
+      if(debugRafId!=null){ cancelAnimationFrame(debugRafId); debugRafId=null; }
+      if(longTaskObserver){ longTaskObserver.disconnect(); longTaskObserver=null; }
+      showToast('Debug overlay OFF');
+    }
+
+    const brandEl=document.getElementById('brandTitle');
+    if(brandEl){
+      brandEl.addEventListener('click', ()=>{
+        const now=Date.now();
+        tapTimes=tapTimes.filter(t=>now-t<TAP_WINDOW_MS);
+        tapTimes.push(now);
+        if(tapTimes.length>=TAPS_NEEDED){
+          tapTimes=[];
+          debugOn ? stopDebug() : startDebug();
+        }
+      });
+    }
+  })();
+  /* ================= END TEMPORARY DEBUG OVERLAY — safe to delete ================= */
 
   buildInit();
   function buildInit(){
